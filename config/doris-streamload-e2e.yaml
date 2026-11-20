@@ -1,0 +1,33 @@
+# 실제 Doris Stream Load E2E — BE HTTP(8040) 직행 (Docker Desktop FE 리다이렉트 회피)
+kafka:
+  bootstrapServers: localhost:19092
+  groupId: flink-connect-doris-sl
+  subscribe:
+    - hv.j.dproc.rd_lp
+
+databases:
+  postgres:
+    jdbcUrl: jdbc:postgresql://localhost:5432/rd
+    user: rd
+    password: rd
+  doris:
+    jdbcUrl: jdbc:mysql://localhost:9030/rd
+    user: root
+    password: ""
+    # 호스트→컨테이너: FE(8030) 307은 내부 BE IP라 실패 → BE 직행
+    streamLoadUrl: "http://localhost:8040/api/rd/{table}/_stream_load"
+
+defaults:
+  tableFromTopic: "hv\\.j\\.dproc\\.(.+)"
+  destinations:
+    - db: postgres
+      writeMode: INSERT
+
+topicPatterns:
+  - pattern: hv.j.dproc.rd_*
+    destinations:
+      - db: postgres
+        writeMode: UPSERT
+        primaryKeys: [METER_ID]
+      - db: doris
+        writeMode: BULK

@@ -1,0 +1,136 @@
+# 예시 파이프라인 설정
+# - 같은 JAR에 YAML만 바꿔: 멀티토픽 Job / 중요토픽 전용 Job 분리
+# - destinations가 여러 개면 한 토픽을 여러 DB에 동시 적재한다.
+# - 제출 예시(flink 디렉터리): flink run -d build/libs/flink-connect-0.1.0-all.jar config/example-pipeline.yaml
+
+# 생략하면 flink-connect. 전용 Job이라면 예: jobName: rd-lp-dedicated
+# jobName: flink-connect-hv
+
+# 깨진 JSON은 지금은 건너뛰고, 토픽·파티션·오프셋만 로그에 남긴다.
+# 그 메시지 원문을 보관하려면 아래 Kafka 보관과 파일 보관 중 하나만 주석을 푼다.
+#
+# Kafka 보관: 실패한 토픽 이름 뒤에 .error를 붙여 같은 Kafka에 넣는다.
+#   예) hv.j.dproc.rd_lp 에서 실패 → hv.j.dproc.rd_lp.error
+#   topic을 적으면 실패를 그 토픽 하나에 모은다. 그 이름은 아래 subscribe와 겹치면 안 된다.
+#   topic을 비우면 이름이 .error로 끝나는 토픽은 읽지 않는다.
+#   subscribe의 * 가 방금 저장한 실패 메시지를 입력으로 다시 가져오지 않게 하기 위해서다.
+#   Kafka가 없는 토픽을 자동으로 만들지 않으면 .error 토픽을 미리 만든다.
+# dlq:
+#   type: kafka
+#   # topic: dlq.flink-connect-hv
+#
+# 파일 보관: Flink가 실행 중인 장비의 .error 폴더에 원본토픽.error 파일로 한 줄씩 추가한다.
+#   예) .error/hv.j.dproc.rd_lp.error
+#   directory는 장비를 재시작해도 지워지지 않는 경로로 바꿀 수 있다.
+#   fileName을 적으면 토픽마다 나누지 않고 그 파일 하나에 모두 추가한다.
+# dlq:
+#   type: file
+#   # directory: .error
+#   # fileName: rejected.error
+
+kafka:
+  # 제출 환경과 Flink 워커에서 모두 접근할 수 있는 주소를 지정한다.
+  bootstrapServers: localhost:9092
+  groupId: flink-connect-hv
+  # 구독은 glob (정규식 아님). 테이블명 추출만 defaults.tableFromTopic 정규식 사용
+  subscribe:
+    - hv.j.dproc.rd_*
+    - hv.j.dproc.meter_curr_limit
+  # rd_lp 전용 Job은 별도 YAML에서 위 groupId와 subscribe를 아래 값으로 교체한다.
+  # 기존 Job에서는 이 토픽을 구독 목록에서 빼고, 이전 시점의 시작 오프셋을 확인한다.
+  # groupId: flink-connect-rd-lp-dedicated
+  # subscribe: [hv.j.dproc.rd_lp]
+
+# YAML에 없는 DB는 제출 환경의 PG_*, MSSQL_*, DORIS_* 환경변수로 보충한다.
+# 예: PG_JDBC_URL / PG_USER / PG_PASSWORD. 해당 DB URL이 없으면 Sink를 붙이지 않는다.
+# WRITE_BATCH_SIZE 환경변수로 기본 쓰기 배치 크기(100)를 바꿀 수 있다.
+databases:
+  postgres:
+    jdbcUrl: jdbc:postgresql://localhost:5432/rd
+    user: rd
+    password: rd
+  mssql:
+    jdbcUrl: jdbc:sqlserver://localhost:1433;databaseName=ami
+    user: sa
+    password: changeit
+  doris:
+    jdbcUrl: jdbc:mysql://localhost:9030/rd
+    user: root
+    password: ""
+    # BULK용 Stream Load. {table} 은 실행 시 치환
+    streamLoadUrl: "http://localhost:8030/api/rd/{table}/_stream_load"
+
+defaults:
+  # 적용 순서: defaults → topicPatterns(위에서 아래로) → topics(정확 일치).
+  # hv.j.dproc.rd_lp → 캡처 "rd_lp" → RD_LP
+  tableFromTopic: "hv\\.j\\.dproc\\.(.+)"
+  destinations:
+    - db: postgres
+      writeMode: UPSERT  # 선택: INSERT(생략 시 기본), UPSERT, BULK
+      # sink: official  # 기본. jdbc는 defaults / topicPatterns의 Postgres·MSSQL만 허용한다.
+
+topicPatterns:
+  # 검침 계열: Postgres + Doris 팬아웃, BULK(Postgres=COPY, MSSQL=SQLServerBulkCopy, Doris=Stream Load)
+  - pattern: hv.j.dproc.rd_*
+    # table: RD_ARCHIVE  # 이 패턴의 목적지에 공통 테이블명을 지정할 때 사용한다.
+    destinations:
+      - db: postgres
+        writeMode: BULK
+      - db: doris
+        writeMode: BULK
+  # 계기 상태 계열: MSSQL
+  - pattern: hv.j.dproc.meter_*
+    destinations:
+      - db: mssql
+        # table: METER_ARCHIVE  # 이 목적지의 테이블명만 재정의할 때 사용한다.
+        # sink: jdbc  # 컬럼 구성이 가변인 자체 JDBC 적재를 쓰려면 활성화한다.
+        writeMode: UPSERT
+        primaryKeys: [METER_ID]
+
+topics:
+  # 정확 일치가 패턴보다 우선
+  hv.j.dproc.rd_lp:
+    table: RD_LP
+    destinations:
+      - db: postgres
+        writeMode: UPSERT
+        # sink: official(기본, 생략) → Flink 공식 커넥터 (Postgres/MSSQL=공식 JdbcSink, Doris=DorisSink)
+        # sink: jdbc → 우리 JDBC Sink. defaults / topicPatterns 에서만 쓸 수 있다 (여기 topics: 에 쓰면 시작 실패)
+        # UPSERT 키 (Postgres ON CONFLICT / MSSQL MERGE). 비우면 DB 테이블 PK, 그것도 없으면 시작 실패
+        primaryKeys: [METER_ID]
+        columns:
+          # 예시 규칙은 실제 입력 필드와 DB 컬럼에 맞춰 필요한 것만 활성화한다.
+          # - {field: RAW_METER_ID, op: rename, to: METER_ID}
+          # - {field: NOISE, op: drop}
+          # - {field: SOURCE, op: const, value: "flink"}
+          # - {field: FAP, op: type, type: decimal}
+          # type 옵션: string, long(bigint), int(integer), double, decimal(number), boolean
+          - field: SERVER_DT
+            op: format
+            format: "yyyy-MM-dd HH:mm:ss"
+          - field: TOTAL_POWER
+            op: expression
+            expression: "FAP + LARAP"
+          - field: METER_ID
+            op: javaFunction
+            # 선택: upper, lower, trim, length, coalesce(빈 값은 value로 대체).
+            expression: upper
+          # 플러그인: 짧은 클래스명 + params
+          # - field: FAP_KWH
+          #   op: plugin
+          #   expression: ScalePlugin
+          #   params:
+          #     source: FAP
+          #     factor: 0.001
+          # SQL 식은 DB가 계산한다. BULK 및 Doris 목적지에서는 쓸 수 없다.
+          - field: INGEST_DT
+            op: sql
+            expression: "NOW()"
+      - db: doris
+        writeMode: BULK
+  hv.j.dproc.meter_curr_limit:
+    table: METER_CURR_LIMIT
+    destinations:
+      - db: mssql
+        writeMode: UPSERT
+        primaryKeys: [METER_ID]

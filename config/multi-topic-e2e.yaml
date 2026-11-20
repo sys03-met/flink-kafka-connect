@@ -1,0 +1,43 @@
+# 다중 토픽(~10) E2E — Docker compose 포트
+kafka:
+  bootstrapServers: localhost:19092
+  groupId: flink-connect-multi-e2e
+  subscribe:
+    - hv.j.dproc.rd_*
+    - hv.j.dproc.meter_*
+
+databases:
+  postgres:
+    jdbcUrl: jdbc:postgresql://localhost:5432/rd
+    user: rd
+    password: rd
+  mssql:
+    jdbcUrl: jdbc:sqlserver://localhost:1433;databaseName=ami;encrypt=false;trustServerCertificate=true
+    user: sa
+    password: "Your_strong_Passw0rd"
+  doris:
+    jdbcUrl: jdbc:mysql://localhost:9030/rd
+    user: root
+    password: ""
+    # Docker Desktop: FE 리다이렉트 대신 BE Stream Load 직행
+    streamLoadUrl: "http://localhost:8040/api/rd/{table}/_stream_load"
+
+defaults:
+  tableFromTopic: "hv\\.j\\.dproc\\.(.+)"
+  destinations:
+    - db: postgres
+      writeMode: INSERT
+
+topicPatterns:
+  - pattern: hv.j.dproc.rd_*
+    destinations:
+      - db: postgres
+        writeMode: UPSERT
+        primaryKeys: [METER_ID]
+      - db: doris
+        writeMode: BULK
+  - pattern: hv.j.dproc.meter_*
+    destinations:
+      - db: mssql
+        writeMode: UPSERT
+        primaryKeys: [METER_ID]

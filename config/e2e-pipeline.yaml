@@ -1,0 +1,54 @@
+# E2E 전용: Docker compose 포트. Doris=실제 all-in-one + BE Stream Load.
+kafka:
+  bootstrapServers: localhost:19092
+  groupId: flink-connect-e2e
+  subscribe:
+    - hv.j.dproc.rd_lp
+    - hv.j.dproc.meter_curr_limit
+
+databases:
+  postgres:
+    jdbcUrl: jdbc:postgresql://localhost:5432/rd
+    user: rd
+    password: rd
+  mssql:
+    jdbcUrl: jdbc:sqlserver://localhost:1433;databaseName=ami;encrypt=false;trustServerCertificate=true
+    user: sa
+    password: "Your_strong_Passw0rd"
+  doris:
+    jdbcUrl: jdbc:mysql://localhost:9030/rd
+    user: root
+    password: ""
+    streamLoadUrl: "http://localhost:8040/api/rd/{table}/_stream_load"
+
+defaults:
+  tableFromTopic: "hv\\.j\\.dproc\\.(.+)"
+  destinations:
+    - db: postgres
+      writeMode: INSERT
+
+topics:
+  hv.j.dproc.rd_lp:
+    table: RD_LP
+    destinations:
+      - db: postgres
+        writeMode: UPSERT
+        primaryKeys: [METER_ID]
+        columns:
+          - field: SERVER_DT
+            op: format
+            format: "yyyy-MM-dd HH:mm:ss"
+          - field: TOTAL_POWER
+            op: expression
+            expression: "FAP + LARAP"
+          - field: METER_ID
+            op: javaFunction
+            expression: upper
+      - db: doris
+        writeMode: BULK
+  hv.j.dproc.meter_curr_limit:
+    table: METER_CURR_LIMIT
+    destinations:
+      - db: mssql
+        writeMode: UPSERT
+        primaryKeys: [METER_ID]
