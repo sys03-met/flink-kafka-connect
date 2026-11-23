@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.smdp.flinkconnect.config.PipelineModels.DbType;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
+import com.smdp.flinkconnect.config.PipelineModels.KafkaStartingOffset;
 import com.smdp.flinkconnect.config.PipelineModels.PipelineConfig;
 import com.smdp.flinkconnect.config.PipelineModels.SinkMode;
 import com.smdp.flinkconnect.config.PipelineModels.WriteMode;
@@ -29,6 +30,7 @@ class YamlPipelineConfigLoaderTest {
   void jobNameAndDlqAreOptional() throws Exception {
     PipelineConfig defaults = load("{}");
     assertEquals("flink-connect", defaults.jobName());
+    assertEquals(KafkaStartingOffset.COMMITTED, defaults.kafka().startingOffset());
     assertNull(defaults.dlq());
 
     PipelineConfig kafka = load("""
@@ -72,6 +74,19 @@ class YamlPipelineConfigLoaderTest {
     assertEquals("RD_LP", destinations.get(0).table());
     assertEquals(List.of("METER_ID"), destinations.get(0).primaryKeys());
     assertEquals(DbType.DORIS, destinations.get(1).db());
+  }
+
+  /** 시작 오프셋은 생략하면 그룹 기록, 오타는 처음부터 읽히지 않게 거절한다. */
+  @Test
+  void startingOffsetsDefaultsToCommittedAndRejectsUnknown() throws Exception {
+    assertEquals(
+        KafkaStartingOffset.EARLIEST,
+        load("kafka: {startingOffsets: earliest}").kafka().startingOffset());
+    assertEquals(
+        KafkaStartingOffset.LATEST,
+        load("kafka: {startingOffsets: LATEST}").kafka().startingOffset());
+    assertThrows(
+        IllegalArgumentException.class, () -> load("kafka: {startingOffsets: beginning}"));
   }
 
   /** sink: jdbc 는 토픽명을 안 적는 곳(defaults / topicPatterns)에서만 된다. */

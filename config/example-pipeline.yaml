@@ -32,6 +32,9 @@ kafka:
   # 제출 환경과 Flink 워커에서 모두 접근할 수 있는 주소를 지정한다.
   bootstrapServers: localhost:9092
   groupId: flink-connect-hv
+  # 생략하면 committed. 그룹에 기록된 지점부터 읽고, 기록이 없으면 맨 끝(latest)만 본다.
+  # 보관분을 처음부터 다시 넣으려면 earliest. 하루 대량 토픽에는 쓰지 않는다.
+  # startingOffsets: committed
   # 구독은 glob (정규식 아님). 테이블명 추출만 defaults.tableFromTopic 정규식 사용
   subscribe:
     - hv.j.dproc.rd_*

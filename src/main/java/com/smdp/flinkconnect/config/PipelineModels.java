@@ -133,14 +133,40 @@ public final class PipelineModels {
     }
   }
 
-  public record KafkaConfig(String bootstrapServers, String groupId, List<String> subscribe)
-      implements Serializable {
+  /**
+   * 복원 상태가 없을 때 Kafka를 어디서 읽기 시작할지 (YAML {@code kafka.startingOffsets}).
+   *
+   * 체크포인트가 있으면 그 지점이 이 값보다 우선한다.
+   */
+  public enum KafkaStartingOffset {
+    /** 그룹에 기록된 오프셋. 기록이 없으면 맨 끝. 하루치 재적재를 피하려는 기본값. */
+    COMMITTED,
+    /** 기록과 상관없이 맨 끝. 밀린 데이터를 버리고 지금만 받을 때. */
+    LATEST,
+    /** 보관 중인 맨 앞. 과거 재적재용. 대량 토픽은 적재 부하가 그대로 돌아온다. */
+    EARLIEST
+  }
+
+  public record KafkaConfig(
+      String bootstrapServers,
+      String groupId,
+      List<String> subscribe,
+      KafkaStartingOffset startingOffset
+  ) implements Serializable {
     private static final long serialVersionUID = 1L;
 
     public KafkaConfig {
       if (subscribe == null) {
         subscribe = List.of();
       }
+      if (startingOffset == null) {
+        startingOffset = KafkaStartingOffset.COMMITTED;
+      }
+    }
+
+    /** 시작 위치를 생략하는 기존 호출. 기본은 그룹 오프셋이다. */
+    public KafkaConfig(String bootstrapServers, String groupId, List<String> subscribe) {
+      this(bootstrapServers, groupId, subscribe, KafkaStartingOffset.COMMITTED);
     }
   }
 

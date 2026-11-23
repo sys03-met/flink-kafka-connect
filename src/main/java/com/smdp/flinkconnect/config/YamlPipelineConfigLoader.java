@@ -8,6 +8,7 @@ import com.smdp.flinkconnect.config.PipelineModels.DlqConfig;
 import com.smdp.flinkconnect.config.PipelineModels.DlqType;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
 import com.smdp.flinkconnect.config.PipelineModels.KafkaConfig;
+import com.smdp.flinkconnect.config.PipelineModels.KafkaStartingOffset;
 import com.smdp.flinkconnect.config.PipelineModels.PipelineConfig;
 import com.smdp.flinkconnect.config.PipelineModels.SinkMode;
 import com.smdp.flinkconnect.config.PipelineModels.TopicConfig;
@@ -116,7 +117,8 @@ public final class YamlPipelineConfigLoader {
           new KafkaConfig(
               stringOr(kafkaMap.get("bootstrapServers"), "localhost:9092"),
               stringOr(kafkaMap.get("groupId"), "flink-connect"),
-              subscribe);
+              subscribe,
+              parseStartingOffset(kafkaMap.get("startingOffsets")));
 
       // --- defaults: 전역 destinations + 토픽→테이블 정규식 ---
       Map<String, Object> defaultsMap =
@@ -290,6 +292,24 @@ public final class YamlPipelineConfigLoader {
    *
    * 예전 값 {@code dynamic} 은 {@code jdbc} 로 바뀌었다. 조용히 다른 길로 가지 않게 이름을 짚어 실패시킨다.
    */
+  /**
+   * YAML {@code kafka.startingOffsets}. 생략·빈 값은 committed.
+   * 오타는 earliest로 떨어지면 대량 토픽을 처음부터 읽으므로 바로 실패시킨다.
+   */
+  private static KafkaStartingOffset parseStartingOffset(Object raw) {
+    if (raw == null || String.valueOf(raw).isBlank()) {
+      return KafkaStartingOffset.COMMITTED;
+    }
+    return switch (String.valueOf(raw).trim().toLowerCase(Locale.ROOT)) {
+      case "committed" -> KafkaStartingOffset.COMMITTED;
+      case "latest" -> KafkaStartingOffset.LATEST;
+      case "earliest" -> KafkaStartingOffset.EARLIEST;
+      default ->
+          throw new IllegalArgumentException(
+              "kafka.startingOffsets: " + raw + " 는 모르는 값입니다. committed(기본), latest, earliest 만 씁니다.");
+    };
+  }
+
   private static SinkMode parseSinkMode(String raw) {
     String v = raw.trim().toLowerCase(Locale.ROOT);
     return switch (v) {

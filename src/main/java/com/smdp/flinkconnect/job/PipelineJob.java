@@ -7,6 +7,7 @@ import com.smdp.flinkconnect.config.PipelineModels.DbType;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
 import com.smdp.flinkconnect.config.PipelineModels.KafkaConfig;
+import com.smdp.flinkconnect.config.PipelineModels.KafkaStartingOffset;
 import com.smdp.flinkconnect.config.PipelineModels.PipelineConfig;
 import com.smdp.flinkconnect.config.YamlPipelineConfigLoader;
 import com.smdp.flinkconnect.model.PipelineRecords.TopicRecord;
@@ -31,10 +32,12 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializationSchema;
+import org.apache.flink.core.execution.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.Collector;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -67,6 +70,10 @@ public final class PipelineJob {
     YamlPipelineConfigLoader.Resolved settings = YamlPipelineConfigLoader.resolve(config, System.getenv());
 
     StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+    // 10초마다 처리 지점을 남긴다. Kafka 그룹 오프셋도 이 성공 때 기록되므로
+    // 재시작이 토픽 처음부터 다시 읽지 않는다. Sink는 at-least-once라 모드도 맞춘다.
+    env.enableCheckpointing(10_000L);
+    env.getCheckpointConfig().setCheckpointingConsistencyMode(CheckpointingMode.AT_LEAST_ONCE);
     assemble(
         env,
         config,
@@ -132,10 +139,22 @@ public final class PipelineJob {
             .setBootstrapServers(kafka.bootstrapServers())
             .setTopics(topics)
             .setGroupId(kafka.groupId())
-            .setStartingOffsets(OffsetsInitializer.earliest())
+            .setStartingOffsets(startingOffsets(kafka.startingOffset()))
             .setDeserializer(decoder)
             .build();
     return env.fromSource(source, WatermarkStrategy.noWatermarks(), "kafka-source");
+  }
+
+  /**
+   * 체크포인트가 없을 때만 쓰는 시작 위치.
+   * committed는 그룹 기록이 없으면 맨 끝이라, 새 그룹이 보관분을 전부 넣지 않는다.
+   */
+  private static OffsetsInitializer startingOffsets(KafkaStartingOffset mode) {
+    return switch (mode) {
+      case COMMITTED -> OffsetsInitializer.committedOffsets(OffsetResetStrategy.LATEST);
+      case LATEST -> OffsetsInitializer.latest();
+      case EARLIEST -> OffsetsInitializer.earliest();
+    };
   }
 
   /**
