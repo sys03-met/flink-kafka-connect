@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * JDBC 계열 DB마다 다른 부분. Postgres/MSSQL 어댑터가 직접 구현한다.
+ * JDBC 계열 DB마다 다른 부분 (인터페이스 — 파일명 {@code I*}). Postgres/MSSQL 어댑터가 직접 구현한다.
  *
  *   - 드라이버 이름
  *   - UPSERT 문장 (Postgres ON CONFLICT / MSSQL MERGE)
@@ -16,7 +16,7 @@ import java.util.Map;
  * 공통 배선({@link JdbcFamilySupport})과 Sink 들은 이 약속만 보고 일한다. DB 종류로 if 를 다시 하지 않는다.
  * Sink 함수 안에 실려 워커로 가므로 Serializable.
  */
-public interface JdbcDialect extends Serializable {
+public interface IJdbcDialect extends Serializable {
 
   /** {@code Class.forName} 대상. */
   String driver();

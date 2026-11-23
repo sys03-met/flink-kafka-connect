@@ -40,7 +40,7 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
 
   private final JdbcEndpointRecord endpoint;
   /** DB마다 다른 드라이버·UPSERT·대량 적재 (어댑터). */
-  private final JdbcDialect dialect;
+  private final IJdbcDialect dialect;
   /** executeBatch / 대량 적재 flush 행 수. */
   private final int batchSize;
 
@@ -55,7 +55,7 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
   private transient Map<String, List<Column>> tableColumns;
   private transient Map<String, List<String>> tableKeys;
 
-  public DynamicTableJdbcSink(JdbcEndpointRecord endpoint, JdbcDialect dialect, int batchSize) {
+  public DynamicTableJdbcSink(JdbcEndpointRecord endpoint, IJdbcDialect dialect, int batchSize) {
     this.endpoint = endpoint;
     this.dialect = dialect;
     this.batchSize = batchSize;

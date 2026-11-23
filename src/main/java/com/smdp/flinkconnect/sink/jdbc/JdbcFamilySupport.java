@@ -67,7 +67,7 @@ public final class JdbcFamilySupport {
       JdbcEndpointRecord endpoint,
       int batch,
       List<DestinationConfig> planned,
-      JdbcDialect dialect
+      IJdbcDialect dialect
   ) {
     // 이 DB로 갈 레코드가 없는 설정이면 갈래를 만들지 않는다
     if (planned.isEmpty()) {
@@ -205,7 +205,7 @@ public final class JdbcFamilySupport {
    * 조용히 넘어가면 잘못된 SQL이 메시지마다 실패하므로 시작 때 막는다.
    */
   private static List<Target> loadTableInfo(
-      JdbcEndpointRecord endpoint, JdbcDialect dialect, List<Target> planned
+      JdbcEndpointRecord endpoint, IJdbcDialect dialect, List<Target> planned
   ) {
     if (planned.isEmpty()) {
       return List.of();

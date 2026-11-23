@@ -5,7 +5,7 @@ import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRecord;
 import com.smdp.flinkconnect.sink.IDbSinkAdapter;
-import com.smdp.flinkconnect.sink.jdbc.JdbcDialect;
+import com.smdp.flinkconnect.sink.jdbc.IJdbcDialect;
 import com.smdp.flinkconnect.sink.jdbc.JdbcFamilySupport;
 import com.smdp.flinkconnect.sink.jdbc.JdbcSql;
 import com.smdp.flinkconnect.sink.jdbc.JdbcSql.Column;
@@ -21,7 +21,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.postgresql.PGConnection;
 
 /**
- * Postgres용 {@link IDbSinkAdapter} + {@link JdbcDialect}.
+ * Postgres용 {@link IDbSinkAdapter} + {@link IJdbcDialect}.
  *
  * 연결
  * {@link DbType#POSTGRES} → {@code PipelineJob.adapterFor} 가 new.
@@ -32,7 +32,7 @@ import org.postgresql.PGConnection;
  *   - UPSERT 문장: {@code INSERT ... ON CONFLICT (키) DO UPDATE}
  *   - BULK: {@code COPY ... FROM STDIN} (Postgres 전용 고속 적재 통로)
  */
-public final class PostgresSinkAdapter implements IDbSinkAdapter, JdbcDialect {
+public final class PostgresSinkAdapter implements IDbSinkAdapter, IJdbcDialect {
 
   private static final long serialVersionUID = 1L;
 

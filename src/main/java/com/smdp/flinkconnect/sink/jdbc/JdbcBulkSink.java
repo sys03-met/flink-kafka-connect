@@ -17,7 +17,7 @@ import org.apache.flink.streaming.api.functions.sink.SinkFunction;
  * 공식 경로의 BULK 대상 하나(테이블 하나)를 대량 적재 통로로 넣는 Sink.
  *
  * 공식 JdbcSink 는 INSERT 문장 배치만 지원하고 Postgres COPY / MSSQL BulkCopy 가 없다.
- * 그래서 BULK 만 이 Sink 가 맡고, 실제 통로는 어댑터({@link JdbcDialect#bulkLoad})가 DB별로 구현한다.
+ * 그래서 BULK 만 이 Sink 가 맡고, 실제 통로는 어댑터({@link IJdbcDialect#bulkLoad})가 DB별로 구현한다.
  *
  * 칸은 Job 시작 때 테이블에서 읽은 목록 고정. 메시지에 없는 칸은 NULL.
  * 체크포인트 때와 종료 때 남은 행을 내보낸다 (안 그러면 마지막 묶음이 DB에 안 간다).
@@ -27,7 +27,7 @@ public final class JdbcBulkSink extends RichSinkFunction<WriteRecord> implements
   private static final long serialVersionUID = 1L;
 
   private final JdbcEndpointRecord endpoint;
-  private final JdbcDialect dialect;
+  private final IJdbcDialect dialect;
   private final int batchSize;
   private final String table;
   /** Job 시작 때 테이블에서 읽은 넣을 칸 (순서 = 행 배열 순서). */
@@ -38,7 +38,7 @@ public final class JdbcBulkSink extends RichSinkFunction<WriteRecord> implements
 
   public JdbcBulkSink(
       JdbcEndpointRecord endpoint,
-      JdbcDialect dialect,
+      IJdbcDialect dialect,
       int batchSize,
       String table,
       List<JdbcSql.Column> columns

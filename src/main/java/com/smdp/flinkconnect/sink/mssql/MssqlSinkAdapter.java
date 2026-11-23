@@ -9,7 +9,7 @@ import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRecord;
 import com.smdp.flinkconnect.sink.IDbSinkAdapter;
-import com.smdp.flinkconnect.sink.jdbc.JdbcDialect;
+import com.smdp.flinkconnect.sink.jdbc.IJdbcDialect;
 import com.smdp.flinkconnect.sink.jdbc.JdbcFamilySupport;
 import com.smdp.flinkconnect.sink.jdbc.JdbcSql.Column;
 import java.math.BigDecimal;
@@ -28,7 +28,7 @@ import java.util.stream.Collectors;
 import org.apache.flink.streaming.api.datastream.DataStream;
 
 /**
- * MSSQL용 {@link IDbSinkAdapter} + {@link JdbcDialect}.
+ * MSSQL용 {@link IDbSinkAdapter} + {@link IJdbcDialect}.
  *
  * 연결
  * {@link DbType#MSSQL} → {@code PipelineJob.adapterFor} 가 new.
@@ -39,7 +39,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
  *   - UPSERT 문장: {@code MERGE ... WITH (HOLDLOCK)} (MSSQL에는 ON CONFLICT 가 없다)
  *   - BULK: {@link SQLServerBulkCopy} (MSSQL 전용 고속 적재 통로, Postgres COPY 대응)
  */
-public final class MssqlSinkAdapter implements IDbSinkAdapter, JdbcDialect {
+public final class MssqlSinkAdapter implements IDbSinkAdapter, IJdbcDialect {
 
   private static final long serialVersionUID = 1L;
 
