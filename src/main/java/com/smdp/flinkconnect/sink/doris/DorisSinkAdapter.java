@@ -39,7 +39,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
  *   - INSERT / BULK: Stream Load 자체가 묶음 적재
  *   - UPSERT: 테이블이 Unique Key 모델이면 같은 키가 덮어써진다 (테이블 설계로 정함)
  *
- * {@code sink: jdbc} 와 {@code op: sql} 은 설정 읽기에서 이미 거절하므로 여기 오지 않는다.
+   * {@code sink: dynamic} 과 {@code op: sql} 은 설정 읽기에서 이미 거절하므로 여기 오지 않는다.
  */
 public final class DorisSinkAdapter implements ISinkAdapter {
 
@@ -50,9 +50,9 @@ public final class DorisSinkAdapter implements ISinkAdapter {
    * 로더가 이 메서드를 부르므로 Doris 분기를 로더에 두지 않는다.
    */
   @Override
-  public void check(DestinationConfig dest, List<String> subscribe, boolean allowJdbc) {
-    if (dest.sink() == SinkMode.JDBC) {
-      throw new IllegalArgumentException("sink: jdbc 는 Doris에 쓸 수 없습니다 (공식 Stream Load만).");
+  public void check(DestinationConfig dest, List<String> subscribe, boolean allowDynamic) {
+    if (dest.sink() == SinkMode.DYNAMIC) {
+      throw new IllegalArgumentException("sink: dynamic 은 Doris에 쓸 수 없습니다 (공식 Stream Load만).");
     }
     if (dest.columns().stream().anyMatch(c -> c.op() != null && c.op().equalsIgnoreCase("sql"))) {
       throw new IllegalStateException("op: sql 컬럼은 Doris 에 쓸 수 없습니다.");

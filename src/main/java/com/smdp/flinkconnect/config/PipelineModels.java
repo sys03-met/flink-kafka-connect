@@ -109,15 +109,15 @@ public final class PipelineModels {
   /**
    * 어느 코드로 DB에 넣을지 (YAML {@code sink:}).
    *
-   *   - {@link #OFFICIAL} (기본) — Flink 공식 커넥터. Postgres/MSSQL은 공식 JdbcSink, Doris는 공식 DorisSink.
+   *   - {@link #JDBC} (기본) — Flink 공식 커넥터. Postgres/MSSQL은 공식 JdbcSink, Doris는 공식 DorisSink.
    *     공식 JdbcSink는 SQL 한 문장을 미리 정해야 해서, Job 시작 때 대상 테이블 컬럼을 DB에서 읽는다.
-   *   - {@link #JDBC} — 우리가 만든 JDBC 코드({@code DynamicTableJdbcSink}). 메시지마다 칸 구성이 달라도 된다.
+   *   - {@link #DYNAMIC} — {@code DynamicSink}. 메시지마다 칸 구성이 달라도 된다.
    *     토픽명을 직접 적은 {@code topics:} 항목에서는 못 쓰고, {@code defaults}/{@code topicPatterns}에서만 쓴다.
    *     Doris에는 쓸 수 없다.
    */
   public enum SinkMode {
-    OFFICIAL,
-    JDBC
+    JDBC,
+    DYNAMIC
   }
 
   /**
@@ -228,7 +228,7 @@ public final class PipelineModels {
    * 리스트는 가변 {@link ArrayList} 복사본. Flink Kryo 는 불변 리스트를 역직렬화하다 깨진다.
    *
    * @param primaryKeys UPSERT용 키. 비면 Job 시작/첫 적재 때 DB 테이블의 PK를 읽어 쓴다. 그래도 없으면 실패.
-   * @param sink 어느 코드로 넣을지. null이면 {@link SinkMode#OFFICIAL}.
+   * @param sink 어느 코드로 넣을지. null이면 {@link SinkMode#JDBC}.
    */
   public record DestinationConfig(
       SystemType system,
@@ -244,20 +244,20 @@ public final class PipelineModels {
       columns = columns == null ? new ArrayList<>() : new ArrayList<>(columns);
       primaryKeys = primaryKeys == null ? new ArrayList<>() : new ArrayList<>(primaryKeys);
       if (sink == null) {
-        sink = SinkMode.OFFICIAL;
+        sink = SinkMode.JDBC;
       }
     }
 
-    /** PK 없음, sink 기본 OFFICIAL. */
+    /** PK 없음, sink 기본 JDBC. */
     public DestinationConfig(SystemType system, String target, WriteMode writeMode, List<ColumnRule> columns) {
-      this(system, target, writeMode, columns, List.of(), SinkMode.OFFICIAL);
+      this(system, target, writeMode, columns, List.of(), SinkMode.JDBC);
     }
 
-    /** sink 기본 OFFICIAL. */
+    /** sink 기본 JDBC. */
     public DestinationConfig(
         SystemType system, String target, WriteMode writeMode, List<ColumnRule> columns, List<String> primaryKeys
     ) {
-      this(system, target, writeMode, columns, primaryKeys, SinkMode.OFFICIAL);
+      this(system, target, writeMode, columns, primaryKeys, SinkMode.JDBC);
     }
   }
 
@@ -315,7 +315,8 @@ public final class PipelineModels {
       String jobName,
       DlqConfig dlq,
       Integer writeBatchSize,
-      Long writeBatchIntervalMs
+      Long writeBatchIntervalMs,
+      String keyBy
   ) implements Serializable {
     private static final long serialVersionUID = 1L;
 
@@ -337,6 +338,8 @@ public final class PipelineModels {
       if (databases == null) {
         databases = Map.of();
       }
+      // 비어 있으면 keyBy를 걸지 않는다. 칸 이름 앞뒤 공백만 다른 설정은 같은 키다.
+      keyBy = keyBy == null || keyBy.isBlank() ? null : keyBy.trim();
     }
 
     /** 배치를 생략하는 기존 호출. 건수·간격은 resolve가 환경변수와 기본값으로 채운다. */
@@ -349,7 +352,7 @@ public final class PipelineModels {
         String jobName,
         DlqConfig dlq
     ) {
-      this(kafka, defaults, topicPatterns, topics, databases, jobName, dlq, null, null);
+      this(kafka, defaults, topicPatterns, topics, databases, jobName, dlq, null, null, null);
     }
 
     /** DB 정보를 넘기던 기존 호출은 이름과 DLQ 기본값을 유지한다. */

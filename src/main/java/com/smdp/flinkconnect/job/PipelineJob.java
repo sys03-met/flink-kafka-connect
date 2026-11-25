@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.common.functions.OpenContext;
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.api.common.serialization.DeserializationSchema;
@@ -113,6 +114,10 @@ public final class PipelineJob {
 
     // 토픽→갈 곳·컬럼 변환 (1메시지 → N WriteRecord)
     DataStream<WriteRecord> writes = records.flatMap(new ExpandProcessor(config)).name("expand");
+    // expand가 키를 풀므로, 나눌 칸이 있을 때만 그 다음에 건다. 없으면 지금처럼 순서 없이 흐른다.
+    if (config.keyBy() != null) {
+      writes = writes.keyBy(new RowFieldKey(config.keyBy()));
+    }
 
     // 그래프는 메시지 전에 다 그려야 해서, 구독 토픽 전부의 갈 곳을 미리 푼다.
     // 설정 오류(모르는 op, BULK+sql 등)도 여기서 Job 시작 전에 걸린다.
@@ -243,6 +248,25 @@ public final class PipelineJob {
     @Override
     public TypeInformation<TopicRecord> getProducedType() {
       return TypeInformation.of(TopicRecord.class);
+    }
+  }
+
+  /**
+   * YAML {@code keyBy} 칸 값으로 나눈다. 같은 값은 같은 작업으로 가고, 없는 칸은 빈 문자열로 모은다.
+   */
+  static final class RowFieldKey implements KeySelector<WriteRecord, String> {
+
+    private static final long serialVersionUID = 1L;
+
+    private final String field;
+
+    RowFieldKey(String field) {
+      this.field = field;
+    }
+
+    @Override
+    public String getKey(WriteRecord value) {
+      return value.row().partitionKey(field);
     }
   }
 

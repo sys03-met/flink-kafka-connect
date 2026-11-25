@@ -38,7 +38,7 @@ public final class JdbcBulkSink extends RichSinkFunction<WriteRecord> implements
   private transient Connection connection;
   private transient List<Object[]> rows;
   /** 건수가 안 차도 intervalMs마다 flush를 부른다. 작업 스레드와 락을 공유한다. */
-  private transient IntervalFlush ticker;
+  private transient JdbcIntervalFlush ticker;
 
   public JdbcBulkSink(
       JdbcEndpointRecord endpoint,
@@ -61,7 +61,7 @@ public final class JdbcBulkSink extends RichSinkFunction<WriteRecord> implements
     connection = JdbcSql.open(endpoint, dialect.driver());
     rows = new ArrayList<>();
     // 버퍼가 생긴 뒤에 켠다. 타이머는 flush의 락으로 작업 스레드와 겹치지 않는다.
-    ticker = new IntervalFlush(intervalMs, () -> {
+    ticker = new JdbcIntervalFlush(intervalMs, () -> {
       try {
         flush();
       } catch (Exception ex) {

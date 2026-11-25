@@ -11,6 +11,8 @@
 # 이 밀리초 안에 건수가 안 차도 쌓인 행을 보낸다. 생략하면 1000.
 # Doris는 행 수가 10000 미만이어도 10000건이 기준이고, 이 시간만 따른다. Kafka는 둘 다 쓰지 않는다.
 # writeBatchIntervalMs: 1000
+# 이 칸 값이 같은 행만 같은 작업으로 보낸다. 생략하면 나누지 않는다.
+# keyBy: METER_ID
 
 # 깨진 JSON은 지금은 건너뛰고, 토픽·파티션·오프셋만 로그에 남긴다.
 # 그 메시지 원문을 보관하려면 아래 Kafka 보관과 파일 보관 중 하나만 주석을 푼다.
@@ -76,7 +78,7 @@ defaults:
   destinations:
     - system: postgres
       writeMode: UPSERT  # 선택: INSERT(생략 시 기본), UPSERT, BULK
-      # sink: official  # 기본. jdbc는 defaults / topicPatterns의 Postgres·MSSQL만 허용한다.
+      # sink: jdbc  # 기본. 생략해도 공식 커넥터다.
 
 topicPatterns:
   # 검침 계열: Postgres + Doris 팬아웃, BULK(Postgres=COPY, MSSQL=SQLServerBulkCopy, Doris=Stream Load)
@@ -92,7 +94,7 @@ topicPatterns:
     destinations:
       - system: mssql
         # target: METER_ARCHIVE  # 이 목적지의 테이블명만 재정의할 때 사용한다.
-        # sink: jdbc  # 컬럼 구성이 가변인 자체 JDBC 적재를 쓰려면 활성화한다.
+        # sink: dynamic  # 컬럼 구성이 메시지마다 바뀔 때. 생략하면 공식 Sink.
         writeMode: UPSERT
         primaryKeys: [METER_ID]
 
@@ -103,8 +105,8 @@ topics:
     destinations:
       - system: postgres
         writeMode: UPSERT
-        # sink: official(기본, 생략) → Flink 공식 커넥터 (Postgres/MSSQL=공식 JdbcSink, Doris=DorisSink)
-        # sink: jdbc → 우리 JDBC Sink. defaults / topicPatterns 에서만 쓸 수 있다 (여기 topics: 에 쓰면 시작 실패)
+        # sink: jdbc(기본, 생략) → Flink 공식 커넥터 (Postgres/MSSQL=공식 JdbcSink, Doris=DorisSink)
+        # sink: dynamic → 칸이 메시지마다 바뀌는 JDBC. defaults / topicPatterns 에서만 (여기 topics: 에 쓰면 시작 실패)
         # UPSERT 키 (Postgres ON CONFLICT / MSSQL MERGE). 비우면 DB 테이블 PK, 그것도 없으면 시작 실패
         primaryKeys: [METER_ID]
         columns:

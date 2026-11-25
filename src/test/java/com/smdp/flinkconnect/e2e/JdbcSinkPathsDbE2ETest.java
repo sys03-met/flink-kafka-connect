@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
  *
  *   - 공식 JdbcSink UPSERT (키는 테이블 PK에서 읽음, op: sql 식 포함)
  *   - 공식 경로 BULK (Postgres COPY / MSSQL BulkCopy)
- *   - {@code sink: jdbc} UPSERT / BULK (우리 JDBC Sink)
+ *   - {@code sink: dynamic} UPSERT / BULK (동적 JDBC Sink)
  *
  * 전제
  *
@@ -86,17 +86,17 @@ class JdbcSinkPathsDbE2ETest {
 
     List<WriteRecord> records = new ArrayList<>();
     // 같은 키 두 번 → 두 번째 값으로 갱신돼야 한다. primaryKeys 는 비워 테이블 PK 조회를 탄다
-    records.add(rec(db, "E2E_OFF_UP", WriteMode.UPSERT, SinkMode.OFFICIAL, row("a", 1.0, "first", nowExpr)));
-    records.add(rec(db, "E2E_OFF_UP", WriteMode.UPSERT, SinkMode.OFFICIAL, row("a", 2.0, "second", nowExpr)));
-    records.add(rec(db, "E2E_OFF_UP", WriteMode.UPSERT, SinkMode.OFFICIAL, row("b", 3.0, "b", nowExpr)));
+    records.add(rec(db, "E2E_OFF_UP", WriteMode.UPSERT, SinkMode.JDBC, row("a", 1.0, "first", nowExpr)));
+    records.add(rec(db, "E2E_OFF_UP", WriteMode.UPSERT, SinkMode.JDBC, row("a", 2.0, "second", nowExpr)));
+    records.add(rec(db, "E2E_OFF_UP", WriteMode.UPSERT, SinkMode.JDBC, row("b", 3.0, "b", nowExpr)));
     // 탭이 든 값(COPY 이스케이프), Integer 값(BulkCopy 형 맞춤)
-    records.add(rec(db, "E2E_OFF_BULK", WriteMode.BULK, SinkMode.OFFICIAL, row("1", 5, "x\ty", null)));
-    records.add(rec(db, "E2E_OFF_BULK", WriteMode.BULK, SinkMode.OFFICIAL, row("2", 6.5, null, null)));
-    records.add(rec(db, "E2E_OFF_BULK", WriteMode.BULK, SinkMode.OFFICIAL, row("3", 7.0, "z", null)));
-    records.add(rec(db, "E2E_JDBC_UP", WriteMode.UPSERT, SinkMode.JDBC, row("a", 1.0, "first", null)));
-    records.add(rec(db, "E2E_JDBC_UP", WriteMode.UPSERT, SinkMode.JDBC, row("a", 2.0, "second", null)));
-    records.add(rec(db, "E2E_JDBC_BULK", WriteMode.BULK, SinkMode.JDBC, row("1", 1.0, "p", null)));
-    records.add(rec(db, "E2E_JDBC_BULK", WriteMode.BULK, SinkMode.JDBC, row("2", 2, "q\tr", null)));
+    records.add(rec(db, "E2E_OFF_BULK", WriteMode.BULK, SinkMode.JDBC, row("1", 5, "x\ty", null)));
+    records.add(rec(db, "E2E_OFF_BULK", WriteMode.BULK, SinkMode.JDBC, row("2", 6.5, null, null)));
+    records.add(rec(db, "E2E_OFF_BULK", WriteMode.BULK, SinkMode.JDBC, row("3", 7.0, "z", null)));
+    records.add(rec(db, "E2E_JDBC_UP", WriteMode.UPSERT, SinkMode.DYNAMIC, row("a", 1.0, "first", null)));
+    records.add(rec(db, "E2E_JDBC_UP", WriteMode.UPSERT, SinkMode.DYNAMIC, row("a", 2.0, "second", null)));
+    records.add(rec(db, "E2E_JDBC_BULK", WriteMode.BULK, SinkMode.DYNAMIC, row("1", 1.0, "p", null)));
+    records.add(rec(db, "E2E_JDBC_BULK", WriteMode.BULK, SinkMode.DYNAMIC, row("2", 2, "q\tr", null)));
 
     FlinkLocalWrites.writeAll(records, Map.of(db, ep), 2);
 

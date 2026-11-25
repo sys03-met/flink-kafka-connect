@@ -35,10 +35,10 @@ import org.yaml.snakeyaml.Yaml;
  * 하는 일:
  *
  *   - SnakeYAML로 Map 파싱 (스키마 검증기 없음 — 필드 누락은 기본값)
- *   - jobName / kafka / dlq / defaults / topicPatterns / topics / databases 섹션 조립
+ *   - jobName / keyBy / kafka / dlq / defaults / topicPatterns / topics / databases 섹션 조립
  *   - Destination·ColumnRule·primaryKeys 하위 파싱
-   *   - {@code sink: jdbc} 를 토픽명 명시 항목에 쓰면 로드 때 바로 실패
-   *   - 시스템별 거절(Doris JDBC, Kafka 토픽명 등)은 각 Sink의 check가 한다
+   *   - {@code sink: dynamic} 를 토픽명 명시 항목에 쓰면 로드 때 바로 실패
+   *   - 시스템별 거절(Doris dynamic, Kafka 토픽명 등)은 각 Sink의 check가 한다
  *   - 모르는 column op는 Resolver 생성 때 실패 (op 목록은 ColumnOpHandlers 한곳)
  *   - {@link #resolve}: YAML + 환경변수 → 최종 접속 정보·배치 크기
  *
@@ -179,7 +179,7 @@ public final class YamlPipelineConfigLoader {
         rejectRetiredTargetKeys(t);
         topics.put(
             e.getKey(),
-            // 토픽명을 직접 적은 항목은 공식 커넥터만 허용 (sink: jdbc 거절)
+            // 토픽명을 직접 적은 항목은 공식 커넥터만 허용 (sink: dynamic 거절)
             new TopicConfig(
                 stringOr(t.get("target"), null), parseDestinations(t.get("destinations"), false, subscribe)));
       }
@@ -191,7 +191,8 @@ public final class YamlPipelineConfigLoader {
           kafka, defaults, patterns, topics, databases,
           stringOr(root.get("jobName"), null), parseDlq(root.get("dlq"), subscribe),
           batch == null ? null : Math.toIntExact(batch),
-          optionalPositive(root.get("writeBatchIntervalMs"), "writeBatchIntervalMs"));
+          optionalPositive(root.get("writeBatchIntervalMs"), "writeBatchIntervalMs"),
+          stringOr(root.get("keyBy"), null));
     }
   }
 
@@ -278,13 +279,13 @@ public final class YamlPipelineConfigLoader {
   /**
    * Destination 리스트 파싱 (defaults / patterns / topics 공통).
    *
-   * writeMode 기본 INSERT. sink 기본 OFFICIAL(공식 커넥터).
+   * writeMode 기본 INSERT. sink 기본 jdbc(공식 커넥터).
    *
-   * @param allowJdbc {@code sink: jdbc} 허용 여부. 토픽명을 직접 적은 {@code topics:}는 false.
+   * @param allowDynamic {@code sink: dynamic} 허용 여부. 토픽명을 직접 적은 {@code topics:}는 false.
    */
   @SuppressWarnings("unchecked")
   private static List<DestinationConfig> parseDestinations(
-      Object raw, boolean allowJdbc, List<String> subscribe
+      Object raw, boolean allowDynamic, List<String> subscribe
   ) {
     if (!(raw instanceof List<?> list)) {
       return List.of();
@@ -301,12 +302,12 @@ public final class YamlPipelineConfigLoader {
           SystemType.valueOf(stringOr(m.get("system"), "POSTGRES").toUpperCase(Locale.ROOT));
       WriteMode mode =
           WriteMode.valueOf(stringOr(m.get("writeMode"), "INSERT").toUpperCase(Locale.ROOT));
-      SinkMode sink = parseSinkMode(stringOr(m.get("sink"), "official"));
-      // 우리 JDBC 코드는 토픽명을 안 적은 패턴/기본 항목에서만. 정확 토픽은 공식 커넥터로 고정한다.
-      if (sink == SinkMode.JDBC && !allowJdbc) {
+      SinkMode sink = parseSinkMode(stringOr(m.get("sink"), "jdbc"));
+      // 동적 JDBC는 토픽명을 안 적은 패턴/기본 항목에서만. 정확 토픽은 공식 커넥터로 고정한다.
+      if (sink == SinkMode.DYNAMIC && !allowDynamic) {
         throw new IllegalArgumentException(
-            "sink: jdbc 는 defaults / topicPatterns 에서만 쓸 수 있습니다. "
-                + "topics: (토픽명 명시) 항목은 공식 Sink만 씁니다. system=" + system);
+            "sink: dynamic 은 defaults / topicPatterns 에서만 쓸 수 있습니다. "
+                + "topics: (토픽명 명시) 항목은 sink: jdbc 만 씁니다. system=" + system);
       }
       DestinationConfig dest =
           new DestinationConfig(
@@ -317,7 +318,7 @@ public final class YamlPipelineConfigLoader {
               parseStringList(m.get("primaryKeys")),
               sink);
       // 시스템별 거절은 어댑터에 있다. 로더는 종류를 나열하지 않는다.
-      system.newSink().check(dest, subscribe, allowJdbc);
+      system.newSink().check(dest, subscribe, allowDynamic);
       result.add(dest);
     }
     return result;
@@ -342,11 +343,6 @@ public final class YamlPipelineConfigLoader {
   }
 
   /**
-   * YAML {@code sink:} 값 → {@link SinkMode}.
-   *
-   * 예전 값 {@code dynamic} 은 {@code jdbc} 로 바뀌었다. 조용히 다른 길로 가지 않게 이름을 짚어 실패시킨다.
-   */
-  /**
    * YAML {@code kafka.startingOffsets}. 생략·빈 값은 committed.
    * 오타는 earliest로 떨어지면 대량 토픽을 처음부터 읽으므로 바로 실패시킨다.
    */
@@ -364,14 +360,23 @@ public final class YamlPipelineConfigLoader {
     };
   }
 
+  /**
+   * YAML {@code sink:} 값 → {@link SinkMode}.
+   *
+   * 예전 값 {@code official} 은 {@code jdbc} 다. dynamic 으로 조용히 가지 않게 이름을 짚어 실패시킨다.
+   */
   private static SinkMode parseSinkMode(String raw) {
     String v = raw.trim().toLowerCase(Locale.ROOT);
+    if ("official".equals(v)) {
+      throw new IllegalArgumentException(
+          "sink: official 은 더 이상 쓰지 않습니다. 공식 커넥터는 sink: jdbc(기본) 이고, 칸이 메시지마다 바뀌면 sink: dynamic 입니다.");
+    }
     return switch (v) {
-      case "official" -> SinkMode.OFFICIAL;
       case "jdbc" -> SinkMode.JDBC;
+      case "dynamic" -> SinkMode.DYNAMIC;
       default ->
           throw new IllegalArgumentException(
-              "sink: " + raw + " 는 모르는 값입니다. official(기본) 또는 jdbc 만 씁니다.");
+              "sink: " + raw + " 는 모르는 값입니다. jdbc(기본) 또는 dynamic 만 씁니다.");
     };
   }
 

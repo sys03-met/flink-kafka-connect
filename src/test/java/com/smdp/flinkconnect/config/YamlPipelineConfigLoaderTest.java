@@ -48,6 +48,14 @@ class YamlPipelineConfigLoaderTest {
     assertEquals("rejected", file.fileName());
   }
 
+  /** keyBy가 없으면 스트림을 나누지 않고, 있으면 그 칸 이름을 남긴다. */
+  @Test
+  void keyByIsOptional() throws Exception {
+    assertNull(load("{}").keyBy());
+    assertEquals("METER_ID", load("keyBy: METER_ID").keyBy());
+    assertNull(load("keyBy: '   '").keyBy());
+  }
+
   /** 잘못된 이름과 경로 이탈을 막고, 명시한 DLQ와 입력 glob의 중복을 거절한다. */
   @Test
   void dlqRejectsInvalidSettingsAndSubscribeOverlap() {
@@ -70,7 +78,7 @@ class YamlPipelineConfigLoaderTest {
     assertEquals(2, destinations.size());
     assertEquals(SystemType.POSTGRES, destinations.get(0).system());
     assertEquals(WriteMode.UPSERT, destinations.get(0).writeMode());
-    assertEquals(SinkMode.OFFICIAL, destinations.get(0).sink());
+    assertEquals(SinkMode.JDBC, destinations.get(0).sink());
     assertEquals("RD_LP", destinations.get(0).target());
     assertEquals(List.of("METER_ID"), destinations.get(0).primaryKeys());
     assertEquals(SystemType.DORIS, destinations.get(1).system());
@@ -89,38 +97,38 @@ class YamlPipelineConfigLoaderTest {
         IllegalArgumentException.class, () -> load("kafka: {startingOffsets: beginning}"));
   }
 
-  /** sink: jdbc 는 토픽명을 안 적는 곳(defaults / topicPatterns)에서만 된다. */
+  /** sink: dynamic 은 토픽명을 안 적는 곳(defaults / topicPatterns)에서만 된다. */
   @Test
-  void jdbcSink_allowedInPatterns_rejectedInTopics() throws Exception {
+  void dynamicSink_allowedInPatterns_rejectedInTopics() throws Exception {
     PipelineConfig ok = load("""
         kafka: {bootstrapServers: x, groupId: g, subscribe: [t.*]}
         topicPatterns:
           - pattern: t.*
-            destinations: [{system: postgres, sink: jdbc}]
+            destinations: [{system: postgres, sink: dynamic}]
         """);
     assertEquals(
-        SinkMode.JDBC, new DefaultTopicBindingResolver(ok).resolve("t.a").getFirst().sink());
+        SinkMode.DYNAMIC, new DefaultTopicBindingResolver(ok).resolve("t.a").getFirst().sink());
 
     assertThrows(IllegalArgumentException.class, () -> load("""
         kafka: {bootstrapServers: x, groupId: g, subscribe: [t.a]}
         topics:
           t.a:
-            destinations: [{system: postgres, sink: jdbc}]
+            destinations: [{system: postgres, sink: dynamic}]
         """));
   }
 
-  /** Doris 는 공식 DorisSink 만 있다. 예전 값 dynamic 은 조용히 바꾸지 않고 실패. */
+  /** Doris 는 공식 DorisSink 만 있다. 예전 값 official 은 jdbc 로 조용히 바꾸지 않고 실패. */
   @Test
-  void jdbcForDoris_andOldDynamic_rejected() {
+  void dynamicForDoris_andOldOfficial_rejected() {
     assertThrows(IllegalArgumentException.class, () -> load("""
         kafka: {bootstrapServers: x, groupId: g, subscribe: [t.*]}
         defaults:
-          destinations: [{system: doris, sink: jdbc}]
+          destinations: [{system: doris, sink: dynamic}]
         """));
     assertThrows(IllegalArgumentException.class, () -> load("""
         kafka: {bootstrapServers: x, groupId: g, subscribe: [t.*]}
         defaults:
-          destinations: [{system: postgres, sink: dynamic}]
+          destinations: [{system: postgres, sink: official}]
         """));
   }
 

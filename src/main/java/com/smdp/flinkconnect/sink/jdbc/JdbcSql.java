@@ -1,6 +1,7 @@
 package com.smdp.flinkconnect.sink.jdbc;
 
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
+import com.smdp.flinkconnect.config.PipelineModels.WriteMode;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRowRecord;
 import java.io.Serializable;
 import java.sql.Connection;
@@ -11,7 +12,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -26,11 +26,11 @@ import java.util.TreeMap;
 /**
  * DB 종류와 상관없는 JDBC 도구 모음 (상태 없음).
  *
- *   - SQL 만들기: {@link #insertSql}
+ *   - SQL 만들기: {@link #insertSql}, {@link #statement} (INSERT/UPSERT 선택)
  *   - 값 넣기: {@link #bindPlaceholders}, {@link #bindColumns}, {@link #toJdbcValue}
  *   - 테이블 칸·PK 읽기: {@link #open}, {@link #columns}, {@link #primaryKeys}, {@link #pick}
  *
- * 호출자: {@link JdbcAttacher}, {@link DynamicTableJdbcSink}, {@link JdbcBulkSink}, 각 방언.
+ * 호출자: {@link JdbcAttacher}, {@link DynamicSink}, {@link JdbcBulkSink}, 각 방언.
  * DB마다 다른 문장(UPSERT)과 대량 적재(COPY/BulkCopy)는 여기 없고 각 어댑터가 직접 구현한다.
  *
  * 이름 비교는 대소문자를 무시한다. Postgres는 따옴표 없는 이름을 소문자로 저장해서,
@@ -77,9 +77,40 @@ public final class JdbcSql {
     return sb.toString();
   }
 
-  /** 메시지 한 행 기준 INSERT ({@code sink: jdbc} 경로 — 칸 구성이 행마다 다를 수 있음). */
+  /** 메시지 한 행 기준 INSERT ({@code sink: dynamic} 경로 — 칸 구성이 행마다 다를 수 있음). */
   public static String insertSql(String table, WriteRowRecord row) {
     return insertSql(table, row.columns(), sqlExpressions(row));
+  }
+
+  /**
+   * INSERT 또는 UPSERT 문장과, {@code ?}에 넣을 칸 이름.
+   *
+   * 공식 경로와 {@code sink: dynamic}이 같은 갈림을 타게 한다.
+   * 식 맵은 여기서 대소문자를 무시하게 맞춘다. MSSQL MERGE 가 {@code containsKey} 로 식을 찾는다.
+   * 어느 칸을 문장에 넣을지는 호출자가 정한다. 없는 칸을 NULL로 채울지 뺄지는 여기 없다.
+   */
+  public record Statement(String sql, List<String> placeholders) {}
+
+  public static Statement statement(
+      IJdbcDialect dialect,
+      String table,
+      WriteMode mode,
+      List<String> columns,
+      Map<String, String> sqlExprs,
+      List<String> primaryKeys
+  ) {
+    Map<String, String> exprs = caseInsensitive(sqlExprs);
+    String sql =
+        mode == WriteMode.UPSERT
+            ? dialect.upsertSql(table, columns, exprs, primaryKeys)
+            : insertSql(table, columns, exprs);
+    List<String> placeholders = new ArrayList<>();
+    for (String column : columns) {
+      if (!exprs.containsKey(column)) {
+        placeholders.add(column);
+      }
+    }
+    return new Statement(sql, List.copyOf(placeholders));
   }
 
   /** 행에 들어 있는 {@code op: sql} 컬럼 → 식. 대소문자 무시 맵. */
@@ -103,7 +134,7 @@ public final class JdbcSql {
   // ---------------------------------------------------------------- 값 넣기
 
   /**
-   * {@code sink: jdbc} 경로: 행의 일반 컬럼 값만 {@code ?} 자리에 순서대로 넣는다 ({@code op:sql} 제외).
+   * {@code sink: dynamic} 경로: 행의 일반 컬럼 값만 {@code ?} 자리에 순서대로 넣는다 ({@code op:sql} 제외).
    * 대상 컬럼 형식을 모르므로 드라이버가 Java 형으로 추론하게 둔다.
    */
   public static void bindPlaceholders(PreparedStatement ps, WriteRowRecord row) throws SQLException {
@@ -175,7 +206,7 @@ public final class JdbcSql {
    */
   public static List<Column> columns(Connection c, String table) throws SQLException {
     List<Column> out = new ArrayList<>();
-    try (Statement st = c.createStatement();
+    try (java.sql.Statement st = c.createStatement();
         ResultSet rs = st.executeQuery("SELECT * FROM " + table + " WHERE 1=0")) {
       ResultSetMetaData md = rs.getMetaData();
       for (int i = 1; i <= md.getColumnCount(); i++) {
@@ -225,7 +256,7 @@ public final class JdbcSql {
   }
 
   /**
-   * 행이 가진 칸 이름 순서대로 테이블 컬럼 정보를 고른다 ({@code sink: jdbc} 대량 적재용).
+   * 행이 가진 칸 이름 순서대로 테이블 컬럼 정보를 고른다 ({@code sink: dynamic} 대량 적재용).
    *
    * @throws IllegalStateException 테이블에 없는 칸이 메시지에 있을 때. 조용히 버리지 않는다.
    */

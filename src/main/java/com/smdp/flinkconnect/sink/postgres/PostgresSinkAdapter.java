@@ -29,7 +29,7 @@ import org.postgresql.PGConnection;
  *
  * 하는 일
  *
- *   - 배선은 {@link JdbcAttacher} 에 맡긴다 (공식 JdbcSink 갈래 + {@code sink: jdbc} 갈래)
+ *   - 배선은 {@link JdbcAttacher} 에 맡긴다 (공식 JdbcSink 갈래 + {@code sink: dynamic} 갈래)
  *   - UPSERT 문장: {@code INSERT ... ON CONFLICT (키) DO UPDATE}
  *   - BULK: {@code COPY ... FROM STDIN} (Postgres 전용 고속 적재 통로)
  */

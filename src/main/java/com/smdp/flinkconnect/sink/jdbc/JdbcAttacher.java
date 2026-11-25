@@ -37,7 +37,7 @@ import org.apache.flink.util.OutputTag;
  * <pre>
  * writes → [이 DB만] → [라우터] ─ 대상1(INSERT/UPSERT) → 공식 JdbcSink
  *                              ├ 대상2(BULK)          → JdbcBulkSink (COPY / BulkCopy)
- *                              └ sink: jdbc 레코드    → DynamicTableJdbcSink
+ *                              └ sink: dynamic 레코드    → DynamicSink
  * </pre>
  *
  * 대상 = (테이블, 넣는 방식) 하나. 공식 JdbcSink 는 대상마다 SQL 한 문장을 미리 정해야 해서,
@@ -72,7 +72,7 @@ public final class JdbcAttacher {
     if (planned.isEmpty()) {
       return;
     }
-    boolean customJdbc = planned.stream().anyMatch(d -> d.sink() == SinkMode.JDBC);
+    boolean dynamic = planned.stream().anyMatch(d -> d.sink() == SinkMode.DYNAMIC);
     List<Target> targets = loadTableInfo(endpoint, dialect, plan(planned));
     String dbName = db.name().toLowerCase(Locale.ROOT);
 
@@ -87,7 +87,7 @@ public final class JdbcAttacher {
         writes
             .filter((FilterFunction<WriteRecord>) r -> r.destination().system() == db)
             .name("to-" + dbName)
-            .process(new TargetRouter(tags, customJdbc))
+            .process(new TargetRouter(tags, dynamic))
             .name("route-" + dbName);
 
     JdbcConnectionOptions connection =
@@ -115,24 +115,23 @@ public final class JdbcAttacher {
         continue;
       }
       List<String> names = t.columns().stream().map(Column::name).toList();
-      String sql =
-          t.writeMode() == WriteMode.UPSERT
-              ? dialect.upsertSql(t.table(), names, t.sqlExprs(), t.primaryKeys())
-              : JdbcSql.insertSql(t.table(), names, t.sqlExprs());
-      // ? 자리 = SQL 식이 없는 칸만 (식 칸은 문장에 이미 들어 있다)
+      // 문장과 ? 칸은 JdbcSql. 여기 칸은 테이블 전체라, 없는 값은 아래 빌더가 NULL로 넣는다.
+      JdbcSql.Statement stmt =
+          JdbcSql.statement(
+              dialect, t.table(), t.writeMode(), names, t.sqlExprs(), t.primaryKeys());
       List<Column> bind =
-          t.columns().stream().filter(c -> !t.sqlExprs().containsKey(c.name())).toList();
+          t.columns().stream().filter(c -> stmt.placeholders().contains(c.name())).toList();
       side.sinkTo(
               JdbcSink.<WriteRecord>builder()
-                  .withQueryStatement(sql, new TargetStatementBuilder(bind))
+                  .withQueryStatement(stmt.sql(), new TargetStatementBuilder(bind))
                   .withExecutionOptions(execution)
                   .buildAtLeastOnce(connection))
-          .name("official-jdbc-" + name);
+          .name("jdbc-" + name);
     }
 
-    if (customJdbc) {
-      routed.addSink(new DynamicTableJdbcSink(endpoint, dialect, batch, batchIntervalMs))
-          .name("custom-jdbc-" + dbName);
+    if (dynamic) {
+      routed.addSink(new DynamicSink(endpoint, dialect, batch, batchIntervalMs))
+          .name("dynamic-" + dbName);
     }
   }
 
@@ -155,7 +154,7 @@ public final class JdbcAttacher {
   }
 
   /**
-   * 공식 경로 대상 목록 ({@code sink: jdbc} 는 제외). 칸 정보는 아직 비어 있다.
+   * 공식 경로 대상 목록 ({@code sink: dynamic} 는 제외). 칸 정보는 아직 비어 있다.
    *
    * 같은 키가 여러 토픽에서 나오면 하나로 합친다. 대상마다 SQL 한 문장이라,
    * primaryKeys 나 SQL 식이 서로 다르면 합칠 수 없어서 실패시킨다.
@@ -163,7 +162,7 @@ public final class JdbcAttacher {
   static List<Target> plan(List<DestinationConfig> planned) {
     Map<String, Target> byKey = new LinkedHashMap<>();
     for (DestinationConfig d : planned) {
-      if (d.sink() != SinkMode.OFFICIAL) {
+      if (d.sink() != SinkMode.JDBC) {
         continue;
       }
       Target next = new Target(d.target(), d.writeMode(), d.primaryKeys(), sqlExprs(d.columns()), List.of());
@@ -243,7 +242,7 @@ public final class JdbcAttacher {
   }
 
   /**
-   * 레코드를 대상별 옆 출구로 보낸다. {@code sink: jdbc} 레코드는 본 출구(우리 Sink).
+   * 레코드를 대상별 옆 출구로 보낸다. {@code sink: dynamic} 레코드는 본 출구(우리 Sink).
    *
    * 대상이 없는 공식 레코드는 계획(구독 토픽 resolve)과 실행이 어긋났다는 뜻이라 버리지 않고 실패시킨다.
    */
@@ -252,18 +251,18 @@ public final class JdbcAttacher {
     private static final long serialVersionUID = 1L;
 
     private final Map<String, OutputTag<WriteRecord>> tags;
-    private final boolean acceptCustomJdbc;
+    private final boolean acceptDynamic;
 
-    TargetRouter(Map<String, OutputTag<WriteRecord>> tags, boolean acceptCustomJdbc) {
+    TargetRouter(Map<String, OutputTag<WriteRecord>> tags, boolean acceptDynamic) {
       this.tags = new HashMap<>(tags);
-      this.acceptCustomJdbc = acceptCustomJdbc;
+      this.acceptDynamic = acceptDynamic;
     }
 
     @Override
     public void processElement(WriteRecord r, Context ctx, Collector<WriteRecord> out) {
-      if (r.destination().sink() == SinkMode.JDBC) {
-        if (!acceptCustomJdbc) {
-          throw new IllegalStateException("sink: jdbc 레코드인데 우리 JDBC Sink 가 없습니다: " + r.destination());
+      if (r.destination().sink() == SinkMode.DYNAMIC) {
+        if (!acceptDynamic) {
+          throw new IllegalStateException("sink: dynamic 레코드인데 동적 JDBC Sink 가 없습니다: " + r.destination());
         }
         out.collect(r);
         return;

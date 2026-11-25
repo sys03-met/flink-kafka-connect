@@ -19,10 +19,10 @@ import org.apache.flink.streaming.api.functions.sink.RichSinkFunction;
 import org.apache.flink.streaming.api.functions.sink.SinkFunction;
 
 /**
- * {@code sink: jdbc} 레코드를 넣는 우리 JDBC Sink.
+ * {@code sink: dynamic} 레코드를 넣는 JDBC Sink.
  *
  * 누가 new 하나
- * {@link JdbcAttacher} — 이 DB에 {@code sink: jdbc} 설정이 있을 때만.
+ * {@link JdbcAttacher} — 이 DB에 {@code sink: dynamic} 설정이 있을 때만.
  *
  * 공식 JdbcSink 와 다른 점: SQL을 미리 정하지 않고 메시지가 가진 칸으로 그때그때 만든다.
  * 그래서 Sink 하나가 여러 테이블·칸 구성을 받고, 메시지에 없는 칸은 SQL에서 빠져 DB DEFAULT 를 탄다.
@@ -33,7 +33,7 @@ import org.apache.flink.streaming.api.functions.sink.SinkFunction;
  *   - UPSERT — 어댑터 문장 (Postgres ON CONFLICT / MSSQL MERGE). 키는 YAML, 없으면 테이블 PK
  *   - BULK — 어댑터 대량 적재 (Postgres COPY / MSSQL BulkCopy). {@code op: sql} 은 거절
  */
-public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
+public final class DynamicSink extends RichSinkFunction<WriteRecord>
     implements CheckpointedFunction {
 
   private static final long serialVersionUID = 1L;
@@ -48,7 +48,7 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
 
   private transient Connection connection;
   /** 건수가 안 차도 intervalMs마다 flushAll을 부른다. 작업 스레드와 락을 공유한다. */
-  private transient IntervalFlush ticker;
+  private transient JdbcIntervalFlush ticker;
   /** key=table|upsert|칸서명 → 재사용 PreparedStatement. */
   private transient Map<String, PreparedStatement> statements;
   /** statements 키별 현재 배치에 쌓인 행 수. */
@@ -59,7 +59,7 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
   private transient Map<String, List<Column>> tableColumns;
   private transient Map<String, List<String>> tableKeys;
 
-  public DynamicTableJdbcSink(
+  public DynamicSink(
       JdbcEndpointRecord endpoint, IJdbcDialect dialect, int batchSize, long intervalMs
   ) {
     this.endpoint = endpoint;
@@ -78,7 +78,7 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
     tableColumns = new HashMap<>();
     tableKeys = new HashMap<>();
     // 버퍼가 생긴 뒤에 켠다. 타이머는 flushAll의 락으로 작업 스레드와 겹치지 않는다.
-    ticker = new IntervalFlush(intervalMs, () -> {
+    ticker = new JdbcIntervalFlush(intervalMs, () -> {
       try {
         flushAll();
       } catch (Exception ex) {
@@ -107,11 +107,16 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
     String stmtKey = table + "|" + upsert + "|" + String.join(",", row.columns());
     PreparedStatement ps = statements.get(stmtKey);
     if (ps == null) {
-      String sql =
-          upsert
-              ? dialect.upsertSql(table, row.columns(), JdbcSql.sqlExpressions(row), keysOf(value))
-              : JdbcSql.insertSql(table, row);
-      ps = connection.prepareStatement(sql);
+      // 문장은 JdbcSql이 고른다. 칸은 이 행에 있는 것만 넘겨, 없는 칸은 DB 기본값이 되게 한다.
+      JdbcSql.Statement stmt =
+          JdbcSql.statement(
+              dialect,
+              table,
+              upsert ? WriteMode.UPSERT : WriteMode.INSERT,
+              row.columns(),
+              JdbcSql.sqlExpressions(row),
+              upsert ? keysOf(value) : List.of());
+      ps = connection.prepareStatement(stmt.sql());
       statements.put(stmtKey, ps);
     }
     JdbcSql.bindPlaceholders(ps, row);

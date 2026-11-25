@@ -97,5 +97,19 @@ public final class PipelineRecords {
     public Object value(String column) {
       return isSql(column) ? null : fields.get(column);
     }
+
+    /**
+     * keyBy에 쓸 문자열. 칸 이름은 대소문자를 무시한다.
+     * 칸이 없거나 값이 null이면 빈 문자열이다. Flink는 null 키로 작업을 죽인다.
+     */
+    public String partitionKey(String field) {
+      for (Map.Entry<String, Object> entry : fields.entrySet()) {
+        if (entry.getKey().equalsIgnoreCase(field)) {
+          Object value = entry.getValue();
+          return value == null ? "" : String.valueOf(value);
+        }
+      }
+      return "";
+    }
   }
 }

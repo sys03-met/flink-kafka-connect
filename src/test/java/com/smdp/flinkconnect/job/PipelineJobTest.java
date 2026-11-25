@@ -19,8 +19,10 @@ import com.smdp.flinkconnect.config.PipelineModels.TopicConfig;
 import com.smdp.flinkconnect.config.PipelineModels.WriteMode;
 import com.smdp.flinkconnect.config.YamlPipelineConfigLoader;
 import com.smdp.flinkconnect.job.PipelineJob.ExpandProcessor;
+import com.smdp.flinkconnect.job.PipelineJob.RowFieldKey;
 import com.smdp.flinkconnect.model.PipelineRecords.TopicRecord;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRecord;
+import com.smdp.flinkconnect.model.PipelineRecords.WriteRowRecord;
 import com.smdp.flinkconnect.transform.TopicBindingResolverTest;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -38,6 +40,9 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import org.apache.flink.api.common.functions.DefaultOpenContext;
+import org.apache.flink.api.common.functions.RichMapFunction;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.types.Either;
@@ -52,6 +57,30 @@ import org.junit.jupiter.api.io.TempDir;
  * Flink 가 하듯 {@code open} 을 먼저 부르고 {@code flatMap} 을 부른다 (클러스터 없이).
  */
 class PipelineJobTest {
+
+  /** 같은 칸 값은 한 키가 되고, 없거나 null이면 빈 문자열이다. */
+  @Test
+  void keyByUsesRowFieldAndEmptyWhenMissing() throws Exception {
+    Map<String, Object> fields = new HashMap<>();
+    fields.put("meter_id", 12);
+    fields.put("EMPTY", null);
+    WriteRecord record =
+        new WriteRecord(
+            new DestinationConfig(SystemType.POSTGRES, "RD_LP", WriteMode.INSERT, List.of()),
+            WriteRowRecord.of(fields));
+    assertEquals("12", new RowFieldKey("METER_ID").getKey(record));
+    assertEquals("", new RowFieldKey("EMPTY").getKey(record));
+    assertEquals("", new RowFieldKey("MISSING").getKey(record));
+  }
+
+  /** 병렬 2. 같은 METER_ID는 keyBy가 있으면 한 작업, 없으면 작업이 갈린다. */
+  @Test
+  void keyBySendsSameValueToOneSubtask() throws Exception {
+    List<WriteRecord> rows = List.of(meterRow("a"), meterRow("a"));
+    assertEquals(Set.of(0, 1), subtasks(rows, false));
+    Set<Integer> keyed = subtasks(rows, true);
+    assertEquals(1, keyed.size());
+  }
 
   /** 오류를 원본 토픽별 파일에 추가하고, 정상 JSON과 tombstone은 파일로 보내지 않는다. */
   @Test
@@ -223,6 +252,40 @@ class PipelineJobTest {
     ExpandProcessor fn = new ExpandProcessor(config);
     fn.open(DefaultOpenContext.INSTANCE);
     return fn;
+  }
+
+  /** 로컬 Flink에서 두 행이 떨어진 작업 번호를 모은다. keyBy가 있으면 그 칸으로 다시 모은다. */
+  private static Set<Integer> subtasks(List<WriteRecord> rows, boolean keyBy) throws Exception {
+    StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironment(2);
+    env.setParallelism(2);
+    DataStream<WriteRecord> stream =
+        env.fromCollection(rows, TypeInformation.of(WriteRecord.class)).rebalance();
+    if (keyBy) {
+      stream = stream.keyBy(new RowFieldKey("METER_ID"));
+    }
+    Set<Integer> tasks = new HashSet<>();
+    try (var out =
+        stream.map(new SubtaskMark()).setParallelism(2).disableChaining().executeAndCollect()) {
+      out.forEachRemaining(mark -> tasks.add(Integer.parseInt(mark.substring(mark.indexOf('@') + 1))));
+    }
+    return tasks;
+  }
+
+  private static WriteRecord meterRow(String id) {
+    Map<String, Object> fields = new HashMap<>();
+    fields.put("METER_ID", id);
+    return new WriteRecord(
+        new DestinationConfig(SystemType.POSTGRES, "RD_LP", WriteMode.INSERT, List.of()),
+        WriteRowRecord.of(fields));
+  }
+
+  /** 행이 실제로 떨어진 작업 번호를 문자열로 남긴다. */
+  static final class SubtaskMark extends RichMapFunction<WriteRecord, String> {
+
+    @Override
+    public String map(WriteRecord value) {
+      return value.row().partitionKey("METER_ID") + "@" + getRuntimeContext().getIndexOfThisSubtask();
+    }
   }
 
   private static Map<String, Object> rdPayload(String id) {

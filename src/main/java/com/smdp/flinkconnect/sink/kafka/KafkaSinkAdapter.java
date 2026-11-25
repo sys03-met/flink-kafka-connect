@@ -31,7 +31,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
  * 하는 일
  *
  *   - {@code target}은 출력 토픽. 비우거나 테이블명으로 유도하지 않는다
- *   - {@code writeMode}, {@code sink: jdbc}, {@code op: sql} 은 토픽에 넣을 자리가 없어 거절
+   *   - {@code writeMode}, {@code sink: dynamic}, {@code op: sql} 은 토픽에 넣을 자리가 없어 거절
  *   - 출력 토픽이 {@code kafka.subscribe}에 다시 걸리면 시작 전에 거절 (자기가 쓴 메시지를 다시 읽음)
  *   - 체크포인트와 맞춰 at-least-once. 재시작 때 같은 JSON이 두 번 나갈 수 있다
  */
@@ -50,9 +50,9 @@ public final class KafkaSinkAdapter implements ISinkAdapter {
 
   /** 토픽으로 보낼 수 없는 설정과, 입력으로 다시 들어오는 출력 토픽을 막는다. */
   @Override
-  public void check(DestinationConfig dest, List<String> subscribe, boolean allowJdbc) {
-    if (dest.sink() == SinkMode.JDBC) {
-      throw new IllegalArgumentException("system: kafka 에는 sink: jdbc 를 쓸 수 없습니다.");
+  public void check(DestinationConfig dest, List<String> subscribe, boolean allowDynamic) {
+    if (dest.sink() == SinkMode.DYNAMIC) {
+      throw new IllegalArgumentException("system: kafka 에는 sink: dynamic 을 쓸 수 없습니다.");
     }
     if (dest.writeMode() != null && dest.writeMode() != WriteMode.INSERT) {
       throw new IllegalArgumentException("system: kafka 에는 writeMode를 쓸 수 없습니다.");

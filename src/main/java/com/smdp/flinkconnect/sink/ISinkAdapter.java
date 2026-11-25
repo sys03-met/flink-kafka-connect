@@ -51,7 +51,7 @@ public interface ISinkAdapter {
    * 이 시스템이 받을 수 없는 목적지 설정을 거절한다. 로드와 resolve 때 호출된다.
    *
    * @param subscribe 입력 구독. 출력 토픽이 여기 다시 걸리면 자기가 쓴 메시지를 다시 읽는다
-   * @param allowJdbc 토픽명을 직접 적은 항목은 false. 기본 구현은 쓰지 않고, 로더가 먼저 거절한다
+   * @param allowDynamic 토픽명을 직접 적은 항목은 false. 기본 구현은 쓰지 않고, 로더가 먼저 거절한다
    */
-  default void check(DestinationConfig dest, List<String> subscribe, boolean allowJdbc) {}
+  default void check(DestinationConfig dest, List<String> subscribe, boolean allowDynamic) {}
 }

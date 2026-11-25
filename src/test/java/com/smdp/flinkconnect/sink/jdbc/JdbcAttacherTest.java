@@ -10,6 +10,7 @@ import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.SinkMode;
 import com.smdp.flinkconnect.config.PipelineModels.WriteMode;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRowRecord;
+import com.smdp.flinkconnect.sink.postgres.PostgresSinkAdapter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,7 +22,7 @@ class JdbcAttacherTest {
   private static final ColumnRule NOW_RULE =
       new ColumnRule("INGEST_DT", "sql", null, null, null, null, "NOW()");
 
-  /** 같은 테이블·방식은 (대소문자 달라도) 하나로 합치고, sink: jdbc 는 공식 대상에서 뺀다. */
+  /** 같은 테이블·방식은 (대소문자 달라도) 하나로 합치고, sink: dynamic 은 공식 대상에서 뺀다. */
   @Test
   void plan_mergesSameKey_skipsCustomJdbc() {
     List<JdbcAttacher.Target> targets =
@@ -31,7 +32,7 @@ class JdbcAttacherTest {
                 new DestinationConfig(SystemType.POSTGRES, "rd_lp", WriteMode.UPSERT, List.of(), List.of("meter_id")),
                 new DestinationConfig(SystemType.POSTGRES, "RD_LP", WriteMode.BULK, List.of()),
                 new DestinationConfig(
-                    SystemType.POSTGRES, "OTHER", WriteMode.INSERT, List.of(), List.of(), SinkMode.JDBC)));
+                    SystemType.POSTGRES, "OTHER", WriteMode.INSERT, List.of(), List.of(), SinkMode.DYNAMIC)));
 
     assertEquals(2, targets.size());
   }
@@ -63,6 +64,24 @@ class JdbcAttacherTest {
     fields.put(WriteRowRecord.SQL_PREFIX + "INGEST_DT", "NOW()");
     String sql = JdbcSql.insertSql("RD_LP", WriteRowRecord.of(fields));
     assertEquals("INSERT INTO RD_LP (METER_ID, INGEST_DT) VALUES (?, NOW())", sql);
+  }
+
+  /** UPSERT는 갱신 문장이고, 식 칸은 ? 목록에서 빠진다. 식 이름 대소문자는 무시한다. */
+  @Test
+  void statement_upsertOmitsSqlColumnFromPlaceholders() {
+    JdbcSql.Statement stmt =
+        JdbcSql.statement(
+            new PostgresSinkAdapter(),
+            "rd_lp",
+            WriteMode.UPSERT,
+            List.of("meter_id", "ingest_dt"),
+            Map.of("INGEST_DT", "NOW()"),
+            List.of("meter_id"));
+    assertEquals(
+        "INSERT INTO rd_lp (meter_id, ingest_dt) VALUES (?, NOW())"
+            + " ON CONFLICT (meter_id) DO UPDATE SET ingest_dt = EXCLUDED.ingest_dt",
+        stmt.sql());
+    assertEquals(List.of("meter_id"), stmt.placeholders());
   }
 
   /** 공식 경로: 테이블 칸 목록 기준. 식 칸(소문자 이름)도 대소문자 무시로 찾는다. */

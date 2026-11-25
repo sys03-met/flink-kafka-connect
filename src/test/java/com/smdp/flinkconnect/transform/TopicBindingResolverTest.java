@@ -172,7 +172,7 @@ public class TopicBindingResolverTest {
         defaultsOnly(new DestinationConfig(SystemType.POSTGRES, null, WriteMode.INSERT, List.of()));
 
     DestinationConfig d = new DefaultTopicBindingResolver(config).resolve("hv.j.dproc.rd_lp").getFirst();
-    assertEquals(SinkMode.OFFICIAL, d.sink());
+    assertEquals(SinkMode.JDBC, d.sink());
     assertEquals("RD_LP", d.target());
   }
 
@@ -225,11 +225,11 @@ public class TopicBindingResolverTest {
                             WriteMode.UPSERT,
                             List.of(),
                             List.of("METER_ID"),
-                            SinkMode.OFFICIAL)))));
+                            SinkMode.JDBC)))));
 
     List<DestinationConfig> destinations =
         new DefaultTopicBindingResolver(config).resolve("hv.j.dproc.rd_lp");
-    assertEquals(SinkMode.OFFICIAL, destinations.getFirst().sink());
+    assertEquals(SinkMode.JDBC, destinations.getFirst().sink());
     assertEquals("RD_LP", destinations.getFirst().target());
   }
 

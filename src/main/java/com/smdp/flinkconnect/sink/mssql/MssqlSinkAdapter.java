@@ -36,7 +36,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
  *
  * 하는 일
  *
- *   - 배선은 {@link JdbcAttacher} 에 맡긴다 (공식 JdbcSink 갈래 + {@code sink: jdbc} 갈래)
+ *   - 배선은 {@link JdbcAttacher} 에 맡긴다 (공식 JdbcSink 갈래 + {@code sink: dynamic} 갈래)
  *   - UPSERT 문장: {@code MERGE ... WITH (HOLDLOCK)} (MSSQL에는 ON CONFLICT 가 없다)
  *   - BULK: {@link SQLServerBulkCopy} (MSSQL 전용 고속 적재 통로, Postgres COPY 대응)
  */
