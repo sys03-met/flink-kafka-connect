@@ -125,7 +125,7 @@ class PipelineJobTest {
       var config = new PipelineConfig(kafka, null, null, null, null, null,
           enabled ? new DlqConfig(DlqType.KAFKA, null, null, null) : null);
       var env = StreamExecutionEnvironment.createLocalEnvironment(1);
-      PipelineJob.assemble(env, config, Set.of("input"), Map.of(), 1);
+      PipelineJob.assemble(env, config, Set.of("input"), Map.of(), 1, 1000L);
       assertEquals(enabled, env.getStreamGraph().getStreamNodes().stream()
           .anyMatch(node -> node.getOperatorName().contains("dlq-kafka")));
     }

@@ -75,7 +75,8 @@ public final class PipelineJob {
         config,
         TopicSubscriptions.listKafkaTopics(config.kafka().bootstrapServers()),
         settings.endpoints(),
-        settings.writeBatchSize());
+        settings.writeBatchSize(),
+        settings.writeBatchIntervalMs());
     // 이 호출 이후에야 Source가 메시지를 읽기 시작
     env.execute(config.jobName());
   }
@@ -91,7 +92,8 @@ public final class PipelineJob {
       PipelineConfig config,
       Set<String> brokerTopics,
       Map<SystemType, JdbcEndpointRecord> endpoints,
-      int batchSize
+      int batchSize,
+      long batchIntervalMs
   ) {
     KafkaConfig kafka = config.kafka();
     // glob을 펼친 뒤 자동 DLQ가 입력에 섞이지 않게 한다 (아직 읽기 아님).
@@ -119,7 +121,7 @@ public final class PipelineJob {
     for (String topic : topics) {
       planned.addAll(resolver.resolve(topic));
     }
-    attachSinks(writes, endpoints, batchSize, planned, config);
+    attachSinks(writes, endpoints, batchSize, batchIntervalMs, planned, config);
     return writes;
   }
 
@@ -167,10 +169,13 @@ public final class PipelineJob {
       DataStream<WriteRecord> writes,
       Map<SystemType, JdbcEndpointRecord> endpoints,
       int batchSize,
+      long batchIntervalMs,
       List<DestinationConfig> planned,
       PipelineConfig config
   ) {
     int batch = Math.max(1, batchSize);
+    // 0이면 타이머가 쉬지 않고 같은 버퍼를 계속 내보낸다. YAML 검증을 한 번 더 막는다.
+    long interval = Math.max(1L, batchIntervalMs);
     for (SystemType system : SystemType.values()) {
       List<DestinationConfig> mine = planned.stream().filter(d -> d.system() == system).toList();
       if (mine.isEmpty()) {
@@ -182,7 +187,7 @@ public final class PipelineJob {
         log.warn("{} 접속 정보가 없어 이 시스템으로 가는 행은 적재하지 않습니다.", system);
         continue;
       }
-      system.newSink().attach(writes, endpoint, batch, mine, config);
+      system.newSink().attach(writes, endpoint, batch, interval, mine, config);
     }
   }
 

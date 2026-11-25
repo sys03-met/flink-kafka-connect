@@ -7,7 +7,7 @@ import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRecord;
 import com.smdp.flinkconnect.sink.ISinkAdapter;
 import com.smdp.flinkconnect.sink.jdbc.IJdbcDialect;
-import com.smdp.flinkconnect.sink.jdbc.JdbcFamilySupport;
+import com.smdp.flinkconnect.sink.jdbc.JdbcAttacher;
 import com.smdp.flinkconnect.sink.jdbc.JdbcSql;
 import com.smdp.flinkconnect.sink.jdbc.JdbcSql.Column;
 import java.io.StringReader;
@@ -29,7 +29,7 @@ import org.postgresql.PGConnection;
  *
  * 하는 일
  *
- *   - 배선은 {@link JdbcFamilySupport} 에 맡긴다 (공식 JdbcSink 갈래 + {@code sink: jdbc} 갈래)
+ *   - 배선은 {@link JdbcAttacher} 에 맡긴다 (공식 JdbcSink 갈래 + {@code sink: jdbc} 갈래)
  *   - UPSERT 문장: {@code INSERT ... ON CONFLICT (키) DO UPDATE}
  *   - BULK: {@code COPY ... FROM STDIN} (Postgres 전용 고속 적재 통로)
  */
@@ -40,16 +40,18 @@ public final class PostgresSinkAdapter implements ISinkAdapter, IJdbcDialect {
   /** 공식 Sink 연결 옵션·우리 Sink open 시 쓰는 드라이버. */
   private static final String DRIVER = "org.postgresql.Driver";
 
-  /** {@link ISinkAdapter} — Postgres 갈래를 그래프에 붙인다. 본문은 JdbcFamilySupport. config는 Kafka용이라 안 쓴다. */
+  /** {@link ISinkAdapter} — Postgres 갈래를 그래프에 붙인다. 본문은 JdbcAttacher. config는 Kafka용이라 안 쓴다. */
   @Override
   public void attach(
       DataStream<WriteRecord> writes,
       JdbcEndpointRecord endpoint,
       int batchSize,
+      long batchIntervalMs,
       List<DestinationConfig> planned,
       PipelineConfig config
   ) {
-    JdbcFamilySupport.attach(writes, SystemType.POSTGRES, endpoint, batchSize, planned, this);
+    JdbcAttacher.attach(
+        writes, SystemType.POSTGRES, endpoint, batchSize, batchIntervalMs, planned, this);
   }
 
   @Override

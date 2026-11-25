@@ -22,7 +22,7 @@ import org.apache.flink.streaming.api.functions.sink.SinkFunction;
  * {@code sink: jdbc} 레코드를 넣는 우리 JDBC Sink.
  *
  * 누가 new 하나
- * {@link JdbcFamilySupport} — 이 DB에 {@code sink: jdbc} 설정이 있을 때만.
+ * {@link JdbcAttacher} — 이 DB에 {@code sink: jdbc} 설정이 있을 때만.
  *
  * 공식 JdbcSink 와 다른 점: SQL을 미리 정하지 않고 메시지가 가진 칸으로 그때그때 만든다.
  * 그래서 Sink 하나가 여러 테이블·칸 구성을 받고, 메시지에 없는 칸은 SQL에서 빠져 DB DEFAULT 를 탄다.
@@ -43,8 +43,12 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
   private final IJdbcDialect dialect;
   /** executeBatch / 대량 적재 flush 행 수. */
   private final int batchSize;
+  /** 이 밀리초 안에 건수가 안 차도 버퍼를 내보낸다. */
+  private final long intervalMs;
 
   private transient Connection connection;
+  /** 건수가 안 차도 intervalMs마다 flushAll을 부른다. 작업 스레드와 락을 공유한다. */
+  private transient IntervalFlush ticker;
   /** key=table|upsert|칸서명 → 재사용 PreparedStatement. */
   private transient Map<String, PreparedStatement> statements;
   /** statements 키별 현재 배치에 쌓인 행 수. */
@@ -55,10 +59,13 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
   private transient Map<String, List<Column>> tableColumns;
   private transient Map<String, List<String>> tableKeys;
 
-  public DynamicTableJdbcSink(JdbcEndpointRecord endpoint, IJdbcDialect dialect, int batchSize) {
+  public DynamicTableJdbcSink(
+      JdbcEndpointRecord endpoint, IJdbcDialect dialect, int batchSize, long intervalMs
+  ) {
     this.endpoint = endpoint;
     this.dialect = dialect;
     this.batchSize = batchSize;
+    this.intervalMs = intervalMs;
   }
 
   /** Task 시작 시 한 번. 접속과 버퍼를 연다 (transient 필드는 직렬화로 안 넘어옴). */
@@ -70,11 +77,20 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
     bulkBatches = new HashMap<>();
     tableColumns = new HashMap<>();
     tableKeys = new HashMap<>();
+    // 버퍼가 생긴 뒤에 켠다. 타이머는 flushAll의 락으로 작업 스레드와 겹치지 않는다.
+    ticker = new IntervalFlush(intervalMs, () -> {
+      try {
+        flushAll();
+      } catch (Exception ex) {
+        throw new IllegalStateException(ex);
+      }
+    });
   }
 
   /** WriteRecord 한 건마다. WriteMode 보고 대량 버퍼 또는 문장 배치에 쌓는다. */
   @Override
-  public void invoke(WriteRecord value, SinkFunction.Context context) throws Exception {
+  public synchronized void invoke(WriteRecord value, SinkFunction.Context context) throws Exception {
+    ticker.throwIfFailed();
     WriteMode mode = value.destination().writeMode();
     if (mode == WriteMode.BULK) {
       appendBulk(value);
@@ -164,8 +180,8 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
     batch.rows.clear();
   }
 
-  /** 쌓인 대량 버퍼·문장 배치를 전부 DB로. */
-  private void flushAll() throws Exception {
+  /** 쌓인 대량 버퍼·문장 배치를 전부 DB로. 작업 스레드와 타이머가 같이 부르므로 락이 필요하다. */
+  private synchronized void flushAll() throws Exception {
     if (bulkBatches != null) {
       for (BulkBatch batch : bulkBatches.values()) {
         flushBulk(batch);
@@ -183,7 +199,8 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
 
   /** 체크포인트 직전: 버퍼를 비워 "체크포인트 완료 = DB 반영" 을 맞춘다. */
   @Override
-  public void snapshotState(FunctionSnapshotContext context) throws Exception {
+  public synchronized void snapshotState(FunctionSnapshotContext context) throws Exception {
+    ticker.throwIfFailed();
     flushAll();
   }
 
@@ -194,6 +211,17 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
   /** Task 종료·취소 시. 남은 행을 내보내고 접속을 닫는다. 안 하면 마지막 행이 DB에 안 간다. */
   @Override
   public void close() throws Exception {
+    // 락을 쥔 채 타이머를 기다리면, flush가 같은 락을 기다리는 동안 서로 못 놓는다.
+    if (ticker != null) {
+      ticker.close();
+    }
+    synchronized (this) {
+      closeBuffers();
+    }
+  }
+
+  /** 남은 행을 내보내고 접속을 닫는다. 호출하는 쪽이 락을 쥐고 있어야 한다. */
+  private void closeBuffers() throws Exception {
     try {
       flushAll();
     } finally {

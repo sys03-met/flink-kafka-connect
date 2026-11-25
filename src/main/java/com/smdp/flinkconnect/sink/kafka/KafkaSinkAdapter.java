@@ -79,9 +79,14 @@ public final class KafkaSinkAdapter implements ISinkAdapter {
       DataStream<WriteRecord> writes,
       JdbcEndpointRecord endpoint,
       int batchSize,
+      long batchIntervalMs,
       List<DestinationConfig> planned,
       PipelineConfig config
   ) {
+    // 프로듀서가 자체 배치한다. DB용 건수·간격으로 행을 쥐고 있으면 토픽 지연만 는다.
+    if (batchSize < 1 || batchIntervalMs < 1) {
+      throw new IllegalArgumentException("배치 건수와 간격은 1 이상이어야 합니다.");
+    }
     if (config == null) {
       throw new IllegalStateException("Kafka Sink에는 파이프라인 설정이 필요합니다.");
     }

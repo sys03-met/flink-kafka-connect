@@ -29,23 +29,29 @@ public final class JdbcBulkSink extends RichSinkFunction<WriteRecord> implements
   private final JdbcEndpointRecord endpoint;
   private final IJdbcDialect dialect;
   private final int batchSize;
+  /** 이 밀리초 안에 건수가 안 차도 버퍼를 내보낸다. */
+  private final long intervalMs;
   private final String table;
   /** Job 시작 때 테이블에서 읽은 넣을 칸 (순서 = 행 배열 순서). */
   private final List<JdbcSql.Column> columns;
 
   private transient Connection connection;
   private transient List<Object[]> rows;
+  /** 건수가 안 차도 intervalMs마다 flush를 부른다. 작업 스레드와 락을 공유한다. */
+  private transient IntervalFlush ticker;
 
   public JdbcBulkSink(
       JdbcEndpointRecord endpoint,
       IJdbcDialect dialect,
       int batchSize,
+      long intervalMs,
       String table,
       List<JdbcSql.Column> columns
   ) {
     this.endpoint = endpoint;
     this.dialect = dialect;
     this.batchSize = batchSize;
+    this.intervalMs = intervalMs;
     this.table = table;
     this.columns = new ArrayList<>(columns);
   }
@@ -54,11 +60,20 @@ public final class JdbcBulkSink extends RichSinkFunction<WriteRecord> implements
   public void open(OpenContext openContext) throws Exception {
     connection = JdbcSql.open(endpoint, dialect.driver());
     rows = new ArrayList<>();
+    // 버퍼가 생긴 뒤에 켠다. 타이머는 flush의 락으로 작업 스레드와 겹치지 않는다.
+    ticker = new IntervalFlush(intervalMs, () -> {
+      try {
+        flush();
+      } catch (Exception ex) {
+        throw new IllegalStateException(ex);
+      }
+    });
   }
 
   /** 행을 테이블 칸 순서 배열로 바꿔 쌓고, batchSize 가 되면 내보낸다. */
   @Override
-  public void invoke(WriteRecord value, SinkFunction.Context context) throws Exception {
+  public synchronized void invoke(WriteRecord value, SinkFunction.Context context) throws Exception {
+    ticker.throwIfFailed();
     // 대량 통로는 값만 보낸다. NOW() 같은 식을 넣을 자리가 없어 NULL 로 들어가므로 막는다
     if (value.row().hasSql()) {
       throw new IllegalStateException("BULK 에는 op: sql 컬럼을 쓸 수 없습니다: " + table);
@@ -74,7 +89,8 @@ public final class JdbcBulkSink extends RichSinkFunction<WriteRecord> implements
     }
   }
 
-  private void flush() throws Exception {
+  /** 작업 스레드와 타이머가 같이 부르므로 락이 필요하다. */
+  private synchronized void flush() throws Exception {
     if (rows == null || rows.isEmpty()) {
       return;
     }
@@ -84,7 +100,8 @@ public final class JdbcBulkSink extends RichSinkFunction<WriteRecord> implements
 
   /** 체크포인트 직전: 버퍼를 비워 "체크포인트 완료 = DB 반영" 을 맞춘다. */
   @Override
-  public void snapshotState(FunctionSnapshotContext context) throws Exception {
+  public synchronized void snapshotState(FunctionSnapshotContext context) throws Exception {
+    ticker.throwIfFailed();
     flush();
   }
 
@@ -94,11 +111,17 @@ public final class JdbcBulkSink extends RichSinkFunction<WriteRecord> implements
 
   @Override
   public void close() throws Exception {
-    try {
-      flush();
-    } finally {
-      if (connection != null) {
-        connection.close();
+    // 락을 쥔 채 타이머를 기다리면, flush가 같은 락을 기다리는 동안 서로 못 놓는다.
+    if (ticker != null) {
+      ticker.close();
+    }
+    synchronized (this) {
+      try {
+        flush();
+      } finally {
+        if (connection != null) {
+          connection.close();
+        }
       }
     }
   }

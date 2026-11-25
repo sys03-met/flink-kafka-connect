@@ -13,7 +13,7 @@ import java.util.Map;
  *   - UPSERT 문장 (Postgres ON CONFLICT / MSSQL MERGE)
  *   - 대량 적재 (Postgres COPY / MSSQL SQLServerBulkCopy)
  *
- * 공통 배선({@link JdbcFamilySupport})과 Sink 들은 이 약속만 보고 일한다. DB 종류로 if 를 다시 하지 않는다.
+ * 공통 배선({@link JdbcAttacher})과 Sink 들은 이 약속만 보고 일한다. DB 종류로 if 를 다시 하지 않는다.
  * Sink 함수 안에 실려 워커로 가므로 Serializable.
  */
 public interface IJdbcDialect extends Serializable {

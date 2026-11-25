@@ -23,7 +23,8 @@ public interface ISinkAdapter {
    *
    * @param writes 전체 스트림 (구현체가 자기 시스템만 고른다)
    * @param endpoint JDBC 접속. {@code jdbc()} 가 아닌 시스템(Kafka)은 null
-   * @param batchSize 배치 크기
+   * @param batchSize 한 번에 모을 행 수. 차지 않아도 batchIntervalMs가 지나면 보낸다
+   * @param batchIntervalMs 건수가 안 차도 버퍼를 내보내는 간격(밀리초)
    * @param planned 이 시스템으로 가는 Destination 전부
    * @param config 같은 Job의 Kafka 브로커·구독. Kafka Sink가 출력에 쓴다
    */
@@ -31,6 +32,7 @@ public interface ISinkAdapter {
       DataStream<WriteRecord> writes,
       JdbcEndpointRecord endpoint,
       int batchSize,
+      long batchIntervalMs,
       List<DestinationConfig> planned,
       PipelineConfig config
   );

@@ -65,13 +65,14 @@ public final class DorisSinkAdapter implements ISinkAdapter {
       DataStream<WriteRecord> writes,
       JdbcEndpointRecord endpoint,
       int batchSize,
+      long batchIntervalMs,
       List<DestinationConfig> planned,
       PipelineConfig config
   ) {
     writes
         .filter((FilterFunction<WriteRecord>) r -> r.destination().system() == SystemType.DORIS)
         .name("to-doris")
-        .sinkTo(create(endpoint, batchSize))
+        .sinkTo(create(endpoint, batchSize, batchIntervalMs))
         .name("doris-official-sink");
   }
 
@@ -79,8 +80,9 @@ public final class DorisSinkAdapter implements ISinkAdapter {
    * Stream Load 배치 Sink.
    *
    * @param batch Job batchSize. 커넥터 하한 때문에 flush rows는 max(10000, batch)
+   * @param intervalMs 건수가 안 차도 이 밀리초가 지나면 Stream Load로 보낸다
    */
-  static DorisSink<WriteRecord> create(JdbcEndpointRecord endpoint, int batch) {
+  static DorisSink<WriteRecord> create(JdbcEndpointRecord endpoint, int batch, long intervalMs) {
     Properties streamLoad = new Properties();
     streamLoad.setProperty("format", "json");
     streamLoad.setProperty("read_json_by_line", "true");
@@ -103,8 +105,9 @@ public final class DorisSinkAdapter implements ISinkAdapter {
             .setLabelPrefix("flink-connect")
             .disable2PC()
             .setBatchMode(true)
+            // 행 기준은 커넥터가 10000 미만을 받지 않는다. 시간만 YAML 간격을 따른다.
             .setBufferFlushMaxRows(Math.max(10_000, batch))
-            .setBufferFlushIntervalMs(1_000)
+            .setBufferFlushIntervalMs(Math.toIntExact(intervalMs))
             .setStreamLoadProp(streamLoad)
             .build();
 

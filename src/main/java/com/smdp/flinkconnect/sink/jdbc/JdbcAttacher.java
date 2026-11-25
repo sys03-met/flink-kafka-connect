@@ -30,7 +30,7 @@ import org.apache.flink.util.Collector;
 import org.apache.flink.util.OutputTag;
 
 /**
- * Postgres/MSSQL 공통 배선 ({@code PostgresSinkAdapter} / {@code MssqlSinkAdapter} 가 호출).
+ * Postgres/MSSQL 쓰기 갈래를 스트림에 붙인다 ({@code PostgresSinkAdapter} / {@code MssqlSinkAdapter} 가 호출).
  *
  * 그래프 모양
  *
@@ -44,12 +44,9 @@ import org.apache.flink.util.OutputTag;
  * 그래프를 그릴 때 DB에 접속해 테이블 칸·PK를 읽는다.
  * 그래서 설정과 테이블이 안 맞으면(키 없음, 없는 칸) 메시지가 오기 전에 Job 시작이 실패한다.
  */
-public final class JdbcFamilySupport {
+public final class JdbcAttacher {
 
-  /** 공식 JdbcSink 가 배치를 못 채워도 이 간격마다 내보낸다. 트래픽이 적을 때 행이 묶여 있지 않게. */
-  private static final long BATCH_INTERVAL_MS = 1000L;
-
-  private JdbcFamilySupport() {}
+  private JdbcAttacher() {}
 
   /**
    * JDBC 계열 DB 갈래 부착.
@@ -58,6 +55,7 @@ public final class JdbcFamilySupport {
    * @param db 이 호출이 담당하는 DB (POSTGRES 또는 MSSQL)
    * @param endpoint 해당 DB JDBC 접속
    * @param batch Sink 배치 크기
+   * @param batchIntervalMs 건수가 안 차도 이 밀리초가 지나면 버퍼를 내보낸다
    * @param planned 이 DB로 가는 Destination 전부 (구독 토픽을 미리 resolve 한 것)
    * @param dialect DB마다 다른 SQL·대량 적재 (어댑터 자신)
    */
@@ -66,6 +64,7 @@ public final class JdbcFamilySupport {
       SystemType db,
       JdbcEndpointRecord endpoint,
       int batch,
+      long batchIntervalMs,
       List<DestinationConfig> planned,
       IJdbcDialect dialect
   ) {
@@ -101,7 +100,7 @@ public final class JdbcFamilySupport {
     JdbcExecutionOptions execution =
         JdbcExecutionOptions.builder()
             .withBatchSize(batch)
-            .withBatchIntervalMs(BATCH_INTERVAL_MS)
+            .withBatchIntervalMs(batchIntervalMs)
             .build();
 
     for (Target t : targets) {
@@ -110,7 +109,8 @@ public final class JdbcFamilySupport {
       DataStream<WriteRecord> side = routed.getSideOutput(tags.get(key));
       // BULK 는 공식 JdbcSink 에 COPY/BulkCopy 통로가 없어서 같은 DB 전용 API로 직접 넣는다
       if (t.writeMode() == WriteMode.BULK) {
-        side.addSink(new JdbcBulkSink(endpoint, dialect, batch, t.table(), t.columns()))
+        side.addSink(
+                new JdbcBulkSink(endpoint, dialect, batch, batchIntervalMs, t.table(), t.columns()))
             .name("bulk-" + name);
         continue;
       }
@@ -131,7 +131,8 @@ public final class JdbcFamilySupport {
     }
 
     if (customJdbc) {
-      routed.addSink(new DynamicTableJdbcSink(endpoint, dialect, batch)).name("custom-jdbc-" + dbName);
+      routed.addSink(new DynamicTableJdbcSink(endpoint, dialect, batch, batchIntervalMs))
+          .name("custom-jdbc-" + dbName);
     }
   }
 

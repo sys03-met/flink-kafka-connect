@@ -11,7 +11,7 @@ import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRecord;
 import com.smdp.flinkconnect.sink.ISinkAdapter;
 import com.smdp.flinkconnect.sink.jdbc.IJdbcDialect;
-import com.smdp.flinkconnect.sink.jdbc.JdbcFamilySupport;
+import com.smdp.flinkconnect.sink.jdbc.JdbcAttacher;
 import com.smdp.flinkconnect.sink.jdbc.JdbcSql.Column;
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -36,7 +36,7 @@ import org.apache.flink.streaming.api.datastream.DataStream;
  *
  * 하는 일
  *
- *   - 배선은 {@link JdbcFamilySupport} 에 맡긴다 (공식 JdbcSink 갈래 + {@code sink: jdbc} 갈래)
+ *   - 배선은 {@link JdbcAttacher} 에 맡긴다 (공식 JdbcSink 갈래 + {@code sink: jdbc} 갈래)
  *   - UPSERT 문장: {@code MERGE ... WITH (HOLDLOCK)} (MSSQL에는 ON CONFLICT 가 없다)
  *   - BULK: {@link SQLServerBulkCopy} (MSSQL 전용 고속 적재 통로, Postgres COPY 대응)
  */
@@ -46,16 +46,18 @@ public final class MssqlSinkAdapter implements ISinkAdapter, IJdbcDialect {
 
   private static final String DRIVER = "com.microsoft.sqlserver.jdbc.SQLServerDriver";
 
-  /** {@link ISinkAdapter} — MSSQL 갈래를 그래프에 붙인다. 본문은 JdbcFamilySupport. config는 Kafka용이라 안 쓴다. */
+  /** {@link ISinkAdapter} — MSSQL 갈래를 그래프에 붙인다. 본문은 JdbcAttacher. config는 Kafka용이라 안 쓴다. */
   @Override
   public void attach(
       DataStream<WriteRecord> writes,
       JdbcEndpointRecord endpoint,
       int batchSize,
+      long batchIntervalMs,
       List<DestinationConfig> planned,
       PipelineConfig config
   ) {
-    JdbcFamilySupport.attach(writes, SystemType.MSSQL, endpoint, batchSize, planned, this);
+    JdbcAttacher.attach(
+        writes, SystemType.MSSQL, endpoint, batchSize, batchIntervalMs, planned, this);
   }
 
   @Override

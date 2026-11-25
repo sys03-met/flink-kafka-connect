@@ -16,7 +16,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 /** 공식 경로 대상 계획 · 공통 INSERT 문장. */
-class JdbcFamilySupportTest {
+class JdbcAttacherTest {
 
   private static final ColumnRule NOW_RULE =
       new ColumnRule("INGEST_DT", "sql", null, null, null, null, "NOW()");
@@ -24,8 +24,8 @@ class JdbcFamilySupportTest {
   /** 같은 테이블·방식은 (대소문자 달라도) 하나로 합치고, sink: jdbc 는 공식 대상에서 뺀다. */
   @Test
   void plan_mergesSameKey_skipsCustomJdbc() {
-    List<JdbcFamilySupport.Target> targets =
-        JdbcFamilySupport.plan(
+    List<JdbcAttacher.Target> targets =
+        JdbcAttacher.plan(
             List.of(
                 new DestinationConfig(SystemType.POSTGRES, "RD_LP", WriteMode.UPSERT, List.of(), List.of("METER_ID")),
                 new DestinationConfig(SystemType.POSTGRES, "rd_lp", WriteMode.UPSERT, List.of(), List.of("meter_id")),
@@ -43,14 +43,14 @@ class JdbcFamilySupportTest {
         List.of(
             new DestinationConfig(SystemType.POSTGRES, "RD_LP", WriteMode.INSERT, List.of(NOW_RULE)),
             new DestinationConfig(SystemType.POSTGRES, "RD_LP", WriteMode.INSERT, List.of()));
-    assertThrows(IllegalStateException.class, () -> JdbcFamilySupport.plan(planned));
+    assertThrows(IllegalStateException.class, () -> JdbcAttacher.plan(planned));
   }
 
   /** 공식 대상은 op: sql 식을 대소문자 무시로 들고 간다. */
   @Test
   void plan_keepsSqlExpressions() {
-    JdbcFamilySupport.Target t =
-        JdbcFamilySupport.plan(
+    JdbcAttacher.Target t =
+        JdbcAttacher.plan(
                 List.of(new DestinationConfig(SystemType.MSSQL, "RD_LP", WriteMode.INSERT, List.of(NOW_RULE))))
             .get(0);
     assertEquals("NOW()", t.sqlExprs().get("ingest_dt"));

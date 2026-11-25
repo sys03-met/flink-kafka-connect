@@ -313,7 +313,9 @@ public final class PipelineModels {
       Map<String, TopicConfig> topics,
       Map<SystemType, JdbcEndpointRecord> databases,
       String jobName,
-      DlqConfig dlq
+      DlqConfig dlq,
+      Integer writeBatchSize,
+      Long writeBatchIntervalMs
   ) implements Serializable {
     private static final long serialVersionUID = 1L;
 
@@ -335,6 +337,19 @@ public final class PipelineModels {
       if (databases == null) {
         databases = Map.of();
       }
+    }
+
+    /** 배치를 생략하는 기존 호출. 건수·간격은 resolve가 환경변수와 기본값으로 채운다. */
+    public PipelineConfig(
+        KafkaConfig kafka,
+        DefaultsConfig defaults,
+        List<TopicPatternConfig> topicPatterns,
+        Map<String, TopicConfig> topics,
+        Map<SystemType, JdbcEndpointRecord> databases,
+        String jobName,
+        DlqConfig dlq
+    ) {
+      this(kafka, defaults, topicPatterns, topics, databases, jobName, dlq, null, null);
     }
 
     /** DB 정보를 넘기던 기존 호출은 이름과 DLQ 기본값을 유지한다. */

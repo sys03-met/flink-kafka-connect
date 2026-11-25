@@ -48,7 +48,12 @@ final class FlinkLocalWrites {
             .name("e2e-requests");
     // E2E는 YAML 없이 WriteRecord만 있으므로, 그래프 재료(계획 Destination)를 여기서 만든다
     PipelineJob.attachSinks(
-        stream, endpoints, batchSize, plannedFrom(requests), new PipelineConfig(null, null, null, Map.of()));
+        stream,
+        endpoints,
+        batchSize,
+        1000L,
+        plannedFrom(requests),
+        new PipelineConfig(null, null, null, Map.of()));
     env.execute("flink-connect-e2e-write");
   }
 

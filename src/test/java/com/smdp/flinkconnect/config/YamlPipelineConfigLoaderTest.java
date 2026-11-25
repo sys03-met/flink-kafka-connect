@@ -180,6 +180,28 @@ class YamlPipelineConfigLoaderTest {
     assertEquals("jdbc:postgresql://yaml/db", resolved.endpoints().get(SystemType.POSTGRES).jdbcUrl());
     assertTrue(resolved.endpoints().containsKey(SystemType.MSSQL));
     assertEquals(50, resolved.writeBatchSize());
+    assertEquals(1000L, resolved.writeBatchIntervalMs());
+  }
+
+  /** 배치 건수·간격은 YAML이 환경변수보다 우선하고, 생략하면 100건·1000ms다. */
+  @Test
+  void writeBatchYamlOverridesEnvAndRejectsZero() throws Exception {
+    PipelineConfig yaml = load("""
+        writeBatchSize: 1000
+        writeBatchIntervalMs: 500
+        """);
+    YamlPipelineConfigLoader.Resolved resolved =
+        YamlPipelineConfigLoader.resolve(yaml, Map.of("WRITE_BATCH_SIZE", "50"));
+    assertEquals(1000, resolved.writeBatchSize());
+    assertEquals(500L, resolved.writeBatchIntervalMs());
+
+    YamlPipelineConfigLoader.Resolved fallback =
+        YamlPipelineConfigLoader.resolve(load("{}"), Map.of());
+    assertEquals(100, fallback.writeBatchSize());
+    assertEquals(1000L, fallback.writeBatchIntervalMs());
+
+    assertThrows(IllegalArgumentException.class, () -> load("writeBatchSize: 0"));
+    assertThrows(IllegalArgumentException.class, () -> load("writeBatchIntervalMs: 0"));
   }
 
   private PipelineConfig load(String yaml) throws Exception {

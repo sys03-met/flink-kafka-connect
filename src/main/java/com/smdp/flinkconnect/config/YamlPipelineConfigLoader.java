@@ -51,7 +51,11 @@ import org.yaml.snakeyaml.Yaml;
 public final class YamlPipelineConfigLoader {
 
   /** {@link #resolve} 결과. Job 이 Sink 를 붙일 때 쓴다. */
-  public record Resolved(Map<SystemType, JdbcEndpointRecord> endpoints, int writeBatchSize) {
+  public record Resolved(
+      Map<SystemType, JdbcEndpointRecord> endpoints,
+      int writeBatchSize,
+      long writeBatchIntervalMs
+  ) {
     public Resolved {
       endpoints = endpoints != null ? Map.copyOf(endpoints) : Map.of();
     }
@@ -62,7 +66,8 @@ public final class YamlPipelineConfigLoader {
    *
    *   - {@code databases:}에 있는 DB는 YAML 값 유지 (env로 덮지 않음)
    *   - 없는 DB만 {@code PG_*}/{@code MSSQL_*}/{@code DORIS_*}로 채움 (URL 없으면 그 DB Sink 안 붙임)
-   *   - {@code WRITE_BATCH_SIZE} 기본 100
+   *   - 배치 건수는 YAML {@code writeBatchSize}, 없으면 {@code WRITE_BATCH_SIZE}, 없으면 100
+   *   - 배치 간격은 YAML {@code writeBatchIntervalMs}, 없으면 1000. 건수가 안 차도 이 시간이 지나면 보낸다
    */
   public static Resolved resolve(PipelineConfig config, Map<String, String> env) {
     Map<String, String> e = env != null ? env : Map.of();
@@ -75,8 +80,27 @@ public final class YamlPipelineConfigLoader {
         putIfAbsent(endpoints, system, e, system.envUrl(), system.envUser(), system.envPassword());
       }
     }
-    String batch = e.get("WRITE_BATCH_SIZE");
-    return new Resolved(endpoints, batch == null || batch.isBlank() ? 100 : Integer.parseInt(batch));
+    // YAML에 건수가 있으면 환경변수보다 우선한다. 둘 다 없으면 100.
+    int batch = config.writeBatchSize() != null
+        ? positiveInt(String.valueOf(config.writeBatchSize()), 100, "writeBatchSize")
+        : positiveInt(e.get("WRITE_BATCH_SIZE"), 100, "WRITE_BATCH_SIZE");
+    long interval = config.writeBatchIntervalMs() != null ? config.writeBatchIntervalMs() : 1000L;
+    if (interval < 1) {
+      throw new IllegalArgumentException("writeBatchIntervalMs 는 1 이상이어야 합니다: " + interval);
+    }
+    return new Resolved(endpoints, batch, interval);
+  }
+
+  /** 비어 있으면 기본값. 0 이하는 배치가 안 나가거나 즉시 도배되므로 실패시킨다. */
+  private static int positiveInt(String raw, int fallback, String key) {
+    if (raw == null || raw.isBlank()) {
+      return fallback;
+    }
+    int n = Integer.parseInt(raw.trim());
+    if (n < 1) {
+      throw new IllegalArgumentException(key + " 는 1 이상이어야 합니다: " + raw);
+    }
+    return n;
   }
 
   /** YAML에 해당 DB가 없을 때만 env URL로 endpoint 추가. URL 없으면 건너뜀 (부분 배포 허용). */
@@ -162,9 +186,12 @@ public final class YamlPipelineConfigLoader {
 
       // --- databases: YAML JDBC. 없으면 resolve 가 env로 보충 ---
       Map<SystemType, JdbcEndpointRecord> databases = parseDatabases(root.get("databases"));
+      Long batch = optionalPositive(root.get("writeBatchSize"), "writeBatchSize");
       return new PipelineConfig(
           kafka, defaults, patterns, topics, databases,
-          stringOr(root.get("jobName"), null), parseDlq(root.get("dlq"), subscribe));
+          stringOr(root.get("jobName"), null), parseDlq(root.get("dlq"), subscribe),
+          batch == null ? null : Math.toIntExact(batch),
+          optionalPositive(root.get("writeBatchIntervalMs"), "writeBatchIntervalMs"));
     }
   }
 
@@ -390,6 +417,23 @@ public final class YamlPipelineConfigLoader {
       }
     }
     return Map.copyOf(out);
+  }
+
+  /**
+   * YAML 숫자 키. 없으면 null이라 resolve가 기본값을 쓴다.
+   * 0이면 타이머가 쉬지 않고 도배하거나, 배치가 영원히 안 나가므로 로드에서 막는다.
+   */
+  private static Long optionalPositive(Object raw, String key) {
+    if (raw == null || String.valueOf(raw).isBlank()) {
+      return null;
+    }
+    long n = raw instanceof Number number
+        ? number.longValue()
+        : Long.parseLong(String.valueOf(raw).trim());
+    if (n < 1) {
+      throw new IllegalArgumentException(key + " 는 1 이상이어야 합니다: " + raw);
+    }
+    return n;
   }
 
   /** null이면 fallback, 아니면 문자열화. YAML 숫자·불리언도 String으로 넣는다. */

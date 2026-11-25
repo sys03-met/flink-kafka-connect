@@ -30,7 +30,7 @@ import java.util.TreeMap;
  *   - 값 넣기: {@link #bindPlaceholders}, {@link #bindColumns}, {@link #toJdbcValue}
  *   - 테이블 칸·PK 읽기: {@link #open}, {@link #columns}, {@link #primaryKeys}, {@link #pick}
  *
- * 호출자: {@link JdbcFamilySupport}, {@link DynamicTableJdbcSink}, {@link JdbcBulkSink}, 각 방언.
+ * 호출자: {@link JdbcAttacher}, {@link DynamicTableJdbcSink}, {@link JdbcBulkSink}, 각 방언.
  * DB마다 다른 문장(UPSERT)과 대량 적재(COPY/BulkCopy)는 여기 없고 각 어댑터가 직접 구현한다.
  *
  * 이름 비교는 대소문자를 무시한다. Postgres는 따옴표 없는 이름을 소문자로 저장해서,
