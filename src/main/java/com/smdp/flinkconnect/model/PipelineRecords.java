@@ -35,7 +35,7 @@ public final class PipelineRecords {
   /**
    * Sink로 흘러가는 쓰기 한 건. 한 메시지의 갈 곳이 N개면 N건.
    *
-   * @param destination 어디·어떻게 (Resolver 가 table/writeMode 를 채운 값)
+   * @param destination 어디·어떻게 (Resolver 가 target/writeMode 를 채운 값)
    * @param row 무엇을
    */
   public record WriteRecord(DestinationConfig destination, WriteRowRecord row) implements Serializable {

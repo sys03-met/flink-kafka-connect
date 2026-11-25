@@ -23,21 +23,21 @@ databases:
     streamLoadUrl: "http://localhost:8040/api/rd/{table}/_stream_load"
 
 defaults:
-  tableFromTopic: "hv\\.j\\.dproc\\.(.+)"
+  targetFromTopic: "hv\\.j\\.dproc\\.(.+)"
   destinations:
-    - db: postgres
+    - system: postgres
       writeMode: INSERT
 
 topicPatterns:
   - pattern: hv.j.dproc.rd_*
     destinations:
-      - db: postgres
+      - system: postgres
         writeMode: UPSERT
         primaryKeys: [METER_ID]
-      - db: doris
+      - system: doris
         writeMode: BULK
   - pattern: hv.j.dproc.meter_*
     destinations:
-      - db: mssql
+      - system: mssql
         writeMode: UPSERT
         primaryKeys: [METER_ID]

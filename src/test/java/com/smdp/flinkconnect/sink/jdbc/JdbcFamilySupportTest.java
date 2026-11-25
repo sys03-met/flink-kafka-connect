@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.smdp.flinkconnect.config.PipelineModels.ColumnRule;
-import com.smdp.flinkconnect.config.PipelineModels.DbType;
+import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.SinkMode;
 import com.smdp.flinkconnect.config.PipelineModels.WriteMode;
@@ -27,11 +27,11 @@ class JdbcFamilySupportTest {
     List<JdbcFamilySupport.Target> targets =
         JdbcFamilySupport.plan(
             List.of(
-                new DestinationConfig(DbType.POSTGRES, "RD_LP", WriteMode.UPSERT, List.of(), List.of("METER_ID")),
-                new DestinationConfig(DbType.POSTGRES, "rd_lp", WriteMode.UPSERT, List.of(), List.of("meter_id")),
-                new DestinationConfig(DbType.POSTGRES, "RD_LP", WriteMode.BULK, List.of()),
+                new DestinationConfig(SystemType.POSTGRES, "RD_LP", WriteMode.UPSERT, List.of(), List.of("METER_ID")),
+                new DestinationConfig(SystemType.POSTGRES, "rd_lp", WriteMode.UPSERT, List.of(), List.of("meter_id")),
+                new DestinationConfig(SystemType.POSTGRES, "RD_LP", WriteMode.BULK, List.of()),
                 new DestinationConfig(
-                    DbType.POSTGRES, "OTHER", WriteMode.INSERT, List.of(), List.of(), SinkMode.JDBC)));
+                    SystemType.POSTGRES, "OTHER", WriteMode.INSERT, List.of(), List.of(), SinkMode.JDBC)));
 
     assertEquals(2, targets.size());
   }
@@ -41,8 +41,8 @@ class JdbcFamilySupportTest {
   void plan_conflictingSqlRules_fails() {
     List<DestinationConfig> planned =
         List.of(
-            new DestinationConfig(DbType.POSTGRES, "RD_LP", WriteMode.INSERT, List.of(NOW_RULE)),
-            new DestinationConfig(DbType.POSTGRES, "RD_LP", WriteMode.INSERT, List.of()));
+            new DestinationConfig(SystemType.POSTGRES, "RD_LP", WriteMode.INSERT, List.of(NOW_RULE)),
+            new DestinationConfig(SystemType.POSTGRES, "RD_LP", WriteMode.INSERT, List.of()));
     assertThrows(IllegalStateException.class, () -> JdbcFamilySupport.plan(planned));
   }
 
@@ -51,7 +51,7 @@ class JdbcFamilySupportTest {
   void plan_keepsSqlExpressions() {
     JdbcFamilySupport.Target t =
         JdbcFamilySupport.plan(
-                List.of(new DestinationConfig(DbType.MSSQL, "RD_LP", WriteMode.INSERT, List.of(NOW_RULE))))
+                List.of(new DestinationConfig(SystemType.MSSQL, "RD_LP", WriteMode.INSERT, List.of(NOW_RULE))))
             .get(0);
     assertEquals("NOW()", t.sqlExprs().get("ingest_dt"));
   }

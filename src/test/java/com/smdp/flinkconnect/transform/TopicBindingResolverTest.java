@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.smdp.flinkconnect.config.PipelineModels.ColumnRule;
-import com.smdp.flinkconnect.config.PipelineModels.DbType;
+import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.config.PipelineModels.DefaultsConfig;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.PipelineConfig;
@@ -58,14 +58,14 @@ public class TopicBindingResolverTest {
   @Test
   void derivesTableFromTopicWhenNotConfigured() {
     PipelineConfig config =
-        defaultsOnly(new DestinationConfig(DbType.POSTGRES, null, WriteMode.UPSERT, List.of()));
+        defaultsOnly(new DestinationConfig(SystemType.POSTGRES, null, WriteMode.UPSERT, List.of()));
 
     List<DestinationConfig> destinations =
         new DefaultTopicBindingResolver(config).resolve("hv.j.dproc.rd_lp");
 
     assertEquals(1, destinations.size());
-    assertEquals("RD_LP", destinations.getFirst().table());
-    assertEquals(DbType.POSTGRES, destinations.getFirst().db());
+    assertEquals("RD_LP", destinations.getFirst().target());
+    assertEquals(SystemType.POSTGRES, destinations.getFirst().system());
     assertEquals(WriteMode.UPSERT, destinations.getFirst().writeMode());
   }
 
@@ -75,40 +75,40 @@ public class TopicBindingResolverTest {
         new PipelineConfig(
             null,
             new DefaultsConfig(
-                List.of(new DestinationConfig(DbType.POSTGRES, null, WriteMode.INSERT, List.of())),
+                List.of(new DestinationConfig(SystemType.POSTGRES, null, WriteMode.INSERT, List.of())),
                 "hv\\.j\\.dproc\\.(.+)"),
             List.of(
                 new TopicPatternConfig(
                     "hv.j.dproc.rd_*",
                     null,
                     List.of(
-                        new DestinationConfig(DbType.POSTGRES, null, WriteMode.BULK, List.of()),
-                        new DestinationConfig(DbType.DORIS, null, WriteMode.BULK, List.of())))),
+                        new DestinationConfig(SystemType.POSTGRES, null, WriteMode.BULK, List.of()),
+                        new DestinationConfig(SystemType.DORIS, null, WriteMode.BULK, List.of())))),
             Map.of(
                 "hv.j.dproc.rd_lp",
                 new TopicConfig(
                     "RD_LP",
                     List.of(
                         new DestinationConfig(
-                            DbType.POSTGRES,
+                            SystemType.POSTGRES,
                             "RD_LP",
                             WriteMode.UPSERT,
                             List.of(
                                 new ColumnRule(
                                     "SERVER_DT", "rename", "server_dt", null, null, null, null))),
                         new DestinationConfig(
-                            DbType.MSSQL, "RD_LP_SHADOW", WriteMode.INSERT, List.of())))));
+                            SystemType.MSSQL, "RD_LP_SHADOW", WriteMode.INSERT, List.of())))));
 
     List<DestinationConfig> destinations =
         new DefaultTopicBindingResolver(config).resolve("hv.j.dproc.rd_lp");
 
     assertEquals(2, destinations.size());
-    assertEquals(DbType.POSTGRES, destinations.get(0).db());
+    assertEquals(SystemType.POSTGRES, destinations.get(0).system());
     assertEquals(WriteMode.UPSERT, destinations.get(0).writeMode());
-    assertEquals("RD_LP", destinations.get(0).table());
+    assertEquals("RD_LP", destinations.get(0).target());
     assertEquals(1, destinations.get(0).columns().size());
-    assertEquals(DbType.MSSQL, destinations.get(1).db());
-    assertEquals("RD_LP_SHADOW", destinations.get(1).table());
+    assertEquals(SystemType.MSSQL, destinations.get(1).system());
+    assertEquals("RD_LP_SHADOW", destinations.get(1).target());
   }
 
   @Test
@@ -117,22 +117,22 @@ public class TopicBindingResolverTest {
         new PipelineConfig(
             null,
             new DefaultsConfig(
-                List.of(new DestinationConfig(DbType.POSTGRES, null, WriteMode.INSERT, List.of())),
+                List.of(new DestinationConfig(SystemType.POSTGRES, null, WriteMode.INSERT, List.of())),
                 "hv\\.j\\.dproc\\.(.+)"),
             List.of(
                 new TopicPatternConfig(
                     "hv.j.dproc.meter_*",
                     null,
                     List.of(
-                        new DestinationConfig(DbType.MSSQL, null, WriteMode.UPSERT, List.of())))),
+                        new DestinationConfig(SystemType.MSSQL, null, WriteMode.UPSERT, List.of())))),
             Map.of());
 
     List<DestinationConfig> destinations =
         new DefaultTopicBindingResolver(config).resolve("hv.j.dproc.meter_curr_limit");
 
     assertEquals(1, destinations.size());
-    assertEquals(DbType.MSSQL, destinations.getFirst().db());
-    assertEquals("METER_CURR_LIMIT", destinations.getFirst().table());
+    assertEquals(SystemType.MSSQL, destinations.getFirst().system());
+    assertEquals("METER_CURR_LIMIT", destinations.getFirst().target());
     assertEquals(WriteMode.UPSERT, destinations.getFirst().writeMode());
   }
 
@@ -142,38 +142,54 @@ public class TopicBindingResolverTest {
         new PipelineConfig(
             null,
             new DefaultsConfig(
-                List.of(new DestinationConfig(DbType.POSTGRES, null, WriteMode.INSERT, List.of())),
+                List.of(new DestinationConfig(SystemType.POSTGRES, null, WriteMode.INSERT, List.of())),
                 "hv\\.j\\.dproc\\.(.+)"),
             List.of(
                 new TopicPatternConfig(
                     "hv.j.dproc.*",
                     null,
                     List.of(
-                        new DestinationConfig(DbType.POSTGRES, null, WriteMode.INSERT, List.of()))),
+                        new DestinationConfig(SystemType.POSTGRES, null, WriteMode.INSERT, List.of()))),
                 new TopicPatternConfig(
                     "hv.j.dproc.rd_*",
                     null,
                     List.of(
-                        new DestinationConfig(DbType.DORIS, null, WriteMode.BULK, List.of())))),
+                        new DestinationConfig(SystemType.DORIS, null, WriteMode.BULK, List.of())))),
             Map.of());
 
     List<DestinationConfig> destinations =
         new DefaultTopicBindingResolver(config).resolve("hv.j.dproc.rd_mon");
 
-    assertEquals(DbType.DORIS, destinations.getFirst().db());
+    assertEquals(SystemType.DORIS, destinations.getFirst().system());
     assertEquals(WriteMode.BULK, destinations.getFirst().writeMode());
-    assertEquals("RD_MON", destinations.getFirst().table());
+    assertEquals("RD_MON", destinations.getFirst().target());
   }
 
   /** 공식 경로가 기본. 테이블명을 토픽에서 끌어내도 된다 (Job이 구독 토픽을 미리 resolve). */
   @Test
   void officialSink_isDefault_andAllowsDerivedTable() {
     PipelineConfig config =
-        defaultsOnly(new DestinationConfig(DbType.POSTGRES, null, WriteMode.INSERT, List.of()));
+        defaultsOnly(new DestinationConfig(SystemType.POSTGRES, null, WriteMode.INSERT, List.of()));
 
     DestinationConfig d = new DefaultTopicBindingResolver(config).resolve("hv.j.dproc.rd_lp").getFirst();
     assertEquals(SinkMode.OFFICIAL, d.sink());
-    assertEquals("RD_LP", d.table());
+    assertEquals("RD_LP", d.target());
+  }
+
+  /** Kafka name은 대문자 테이블명으로 바꾸지 않고, 비우면 유도하지 않는다. */
+  @Test
+  void kafkaNameIsNotDerivedFromTopic() {
+    PipelineConfig named =
+        defaultsOnly(new DestinationConfig(SystemType.KAFKA, "hv.j.out.rd_lp", WriteMode.INSERT, List.of()));
+    assertEquals(
+        "hv.j.out.rd_lp",
+        new DefaultTopicBindingResolver(named).resolve("hv.j.dproc.rd_lp").getFirst().target());
+
+    PipelineConfig missing =
+        defaultsOnly(new DestinationConfig(SystemType.KAFKA, null, WriteMode.INSERT, List.of()));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new DefaultTopicBindingResolver(missing).resolve("hv.j.dproc.rd_lp"));
   }
 
   /** 대량 통로·Doris 는 값만 보내서 NOW() 같은 식을 실을 수 없다 → 시작 때 거절. */
@@ -182,8 +198,8 @@ public class TopicBindingResolverTest {
     ColumnRule now = new ColumnRule("INGEST_DT", "sql", null, null, null, null, "NOW()");
     for (DestinationConfig dest :
         List.of(
-            new DestinationConfig(DbType.POSTGRES, "RD_LP", WriteMode.BULK, List.of(now)),
-            new DestinationConfig(DbType.DORIS, "RD_LP", WriteMode.INSERT, List.of(now)))) {
+            new DestinationConfig(SystemType.POSTGRES, "RD_LP", WriteMode.BULK, List.of(now)),
+            new DestinationConfig(SystemType.DORIS, "RD_LP", WriteMode.INSERT, List.of(now)))) {
       PipelineConfig config = defaultsOnly(dest);
       assertThrows(
           IllegalStateException.class,
@@ -204,7 +220,7 @@ public class TopicBindingResolverTest {
                     "RD_LP",
                     List.of(
                         new DestinationConfig(
-                            DbType.POSTGRES,
+                            SystemType.POSTGRES,
                             "RD_LP",
                             WriteMode.UPSERT,
                             List.of(),
@@ -214,14 +230,14 @@ public class TopicBindingResolverTest {
     List<DestinationConfig> destinations =
         new DefaultTopicBindingResolver(config).resolve("hv.j.dproc.rd_lp");
     assertEquals(SinkMode.OFFICIAL, destinations.getFirst().sink());
-    assertEquals("RD_LP", destinations.getFirst().table());
+    assertEquals("RD_LP", destinations.getFirst().target());
   }
 
   @Test
   void resolveCachesBindingsPerTopic() {
     DefaultTopicBindingResolver resolver =
         new DefaultTopicBindingResolver(
-            defaultsOnly(new DestinationConfig(DbType.POSTGRES, null, WriteMode.INSERT, List.of())));
+            defaultsOnly(new DestinationConfig(SystemType.POSTGRES, null, WriteMode.INSERT, List.of())));
 
     assertSame(resolver.resolve("hv.j.dproc.rd_lp"), resolver.resolve("hv.j.dproc.rd_lp"));
   }
@@ -231,8 +247,8 @@ public class TopicBindingResolverTest {
   void expandCreatesOneWriteRecordPerDestination() {
     PipelineConfig config =
         defaultsOnly(
-            new DestinationConfig(DbType.POSTGRES, "RD_LP", WriteMode.UPSERT, List.of()),
-            new DestinationConfig(DbType.DORIS, "RD_LP", WriteMode.BULK, List.of()));
+            new DestinationConfig(SystemType.POSTGRES, "RD_LP", WriteMode.UPSERT, List.of()),
+            new DestinationConfig(SystemType.DORIS, "RD_LP", WriteMode.BULK, List.of()));
     Map<String, Object> payload = new HashMap<>();
     payload.put("METER_ID", "M1");
 
@@ -240,8 +256,8 @@ public class TopicBindingResolverTest {
         new DefaultTopicBindingResolver(config).expand(new TopicRecord("hv.j.dproc.rd_lp", payload));
 
     assertEquals(2, out.size());
-    assertEquals(DbType.POSTGRES, out.get(0).destination().db());
-    assertEquals(DbType.DORIS, out.get(1).destination().db());
+    assertEquals(SystemType.POSTGRES, out.get(0).destination().system());
+    assertEquals(SystemType.DORIS, out.get(1).destination().system());
   }
 
   /** example-pipeline.yaml: rd_lp → PG UPSERT + Doris BULK, meter_curr_limit → MSSQL UPSERT. */
@@ -253,17 +269,17 @@ public class TopicBindingResolverTest {
 
     List<DestinationConfig> rdLp = resolver.resolve("hv.j.dproc.rd_lp");
     assertEquals(2, rdLp.size());
-    assertEquals(DbType.POSTGRES, rdLp.get(0).db());
-    assertEquals("RD_LP", rdLp.get(0).table());
+    assertEquals(SystemType.POSTGRES, rdLp.get(0).system());
+    assertEquals("RD_LP", rdLp.get(0).target());
     assertEquals(WriteMode.UPSERT, rdLp.get(0).writeMode());
-    assertEquals(DbType.DORIS, rdLp.get(1).db());
-    assertEquals("RD_LP", rdLp.get(1).table());
+    assertEquals(SystemType.DORIS, rdLp.get(1).system());
+    assertEquals("RD_LP", rdLp.get(1).target());
     assertEquals(WriteMode.BULK, rdLp.get(1).writeMode());
 
     List<DestinationConfig> meter = resolver.resolve("hv.j.dproc.meter_curr_limit");
     assertEquals(1, meter.size());
-    assertEquals(DbType.MSSQL, meter.get(0).db());
-    assertEquals("METER_CURR_LIMIT", meter.get(0).table());
+    assertEquals(SystemType.MSSQL, meter.get(0).system());
+    assertEquals("METER_CURR_LIMIT", meter.get(0).target());
     assertEquals(WriteMode.UPSERT, meter.get(0).writeMode());
   }
 
@@ -277,15 +293,15 @@ public class TopicBindingResolverTest {
     for (String topic : RD_TOPICS) {
       List<DestinationConfig> destinations = resolver.resolve(topic);
       assertEquals(2, destinations.size(), topic);
-      assertEquals(DbType.POSTGRES, destinations.get(0).db(), topic);
-      assertEquals(DbType.DORIS, destinations.get(1).db(), topic);
-      assertTrue(destinations.get(0).table().startsWith("RD_"), topic);
+      assertEquals(SystemType.POSTGRES, destinations.get(0).system(), topic);
+      assertEquals(SystemType.DORIS, destinations.get(1).system(), topic);
+      assertTrue(destinations.get(0).target().startsWith("RD_"), topic);
     }
     for (String topic : METER_TOPICS) {
       List<DestinationConfig> destinations = resolver.resolve(topic);
       assertEquals(1, destinations.size(), topic);
-      assertEquals(DbType.MSSQL, destinations.get(0).db(), topic);
-      assertTrue(destinations.get(0).table().startsWith("METER_"), topic);
+      assertEquals(SystemType.MSSQL, destinations.get(0).system(), topic);
+      assertTrue(destinations.get(0).target().startsWith("METER_"), topic);
     }
   }
 }

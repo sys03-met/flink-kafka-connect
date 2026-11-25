@@ -1,12 +1,14 @@
 package com.smdp.flinkconnect.sink.doris;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smdp.flinkconnect.config.PipelineModels.DbType;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
+import com.smdp.flinkconnect.config.PipelineModels.PipelineConfig;
+import com.smdp.flinkconnect.config.PipelineModels.SinkMode;
+import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRecord;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRowRecord;
-import com.smdp.flinkconnect.sink.IDbSinkAdapter;
+import com.smdp.flinkconnect.sink.ISinkAdapter;
 import java.io.IOException;
 import java.io.Serializable;
 import java.net.URI;
@@ -24,7 +26,7 @@ import org.apache.flink.api.common.functions.FilterFunction;
 import org.apache.flink.streaming.api.datastream.DataStream;
 
 /**
- * Doris용 {@link IDbSinkAdapter}. Doris 에 관한 것은 전부 이 파일에 있다.
+ * Doris용 {@link ISinkAdapter}. Doris 에 관한 것은 전부 이 파일에 있다.
  *
  *   - Doris 행만 filter 후 공식 {@link DorisSink} (Stream Load) 하나 부착
  *   - 접속 정보에서 DB명·FE/BE 주소 해석
@@ -39,20 +41,35 @@ import org.apache.flink.streaming.api.datastream.DataStream;
  *
  * {@code sink: jdbc} 와 {@code op: sql} 은 설정 읽기에서 이미 거절하므로 여기 오지 않는다.
  */
-public final class DorisSinkAdapter implements IDbSinkAdapter {
+public final class DorisSinkAdapter implements ISinkAdapter {
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
 
-  /** {@link IDbSinkAdapter} — Doris 행 filter 후 공식 Stream Load Sink 하나 부착. planned 는 안 쓴다. */
+  /**
+   * Stream Load는 값만 보낸다. JDBC 갈래와 SQL 식은 시작 전에 거절한다.
+   * 로더가 이 메서드를 부르므로 Doris 분기를 로더에 두지 않는다.
+   */
+  @Override
+  public void check(DestinationConfig dest, List<String> subscribe, boolean allowJdbc) {
+    if (dest.sink() == SinkMode.JDBC) {
+      throw new IllegalArgumentException("sink: jdbc 는 Doris에 쓸 수 없습니다 (공식 Stream Load만).");
+    }
+    if (dest.columns().stream().anyMatch(c -> c.op() != null && c.op().equalsIgnoreCase("sql"))) {
+      throw new IllegalStateException("op: sql 컬럼은 Doris 에 쓸 수 없습니다.");
+    }
+  }
+
+  /** {@link ISinkAdapter} — Doris 행 filter 후 공식 Stream Load Sink 하나 부착. config는 Kafka용이라 안 쓴다. */
   @Override
   public void attach(
       DataStream<WriteRecord> writes,
       JdbcEndpointRecord endpoint,
       int batchSize,
-      List<DestinationConfig> planned
+      List<DestinationConfig> planned,
+      PipelineConfig config
   ) {
     writes
-        .filter((FilterFunction<WriteRecord>) r -> r.destination().db() == DbType.DORIS)
+        .filter((FilterFunction<WriteRecord>) r -> r.destination().system() == SystemType.DORIS)
         .name("to-doris")
         .sinkTo(create(endpoint, batchSize))
         .name("doris-official-sink");
@@ -188,7 +205,7 @@ public final class DorisSinkAdapter implements IDbSinkAdapter {
     @Override
     public DorisRecord serialize(WriteRecord req) throws IOException {
       return DorisRecord.of(
-          database, req.destination().table(), MAPPER.writeValueAsBytes(jsonFields(req.row())));
+          database, req.destination().target(), MAPPER.writeValueAsBytes(jsonFields(req.row())));
     }
   }
 }

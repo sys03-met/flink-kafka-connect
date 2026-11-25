@@ -5,7 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.smdp.flinkconnect.config.PipelineModels.DbType;
+import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
 import com.smdp.flinkconnect.config.PipelineModels.KafkaStartingOffset;
@@ -68,12 +68,12 @@ class YamlPipelineConfigLoaderTest {
         new DefaultTopicBindingResolver(config).resolve("hv.j.dproc.rd_lp");
 
     assertEquals(2, destinations.size());
-    assertEquals(DbType.POSTGRES, destinations.get(0).db());
+    assertEquals(SystemType.POSTGRES, destinations.get(0).system());
     assertEquals(WriteMode.UPSERT, destinations.get(0).writeMode());
     assertEquals(SinkMode.OFFICIAL, destinations.get(0).sink());
-    assertEquals("RD_LP", destinations.get(0).table());
+    assertEquals("RD_LP", destinations.get(0).target());
     assertEquals(List.of("METER_ID"), destinations.get(0).primaryKeys());
-    assertEquals(DbType.DORIS, destinations.get(1).db());
+    assertEquals(SystemType.DORIS, destinations.get(1).system());
   }
 
   /** 시작 오프셋은 생략하면 그룹 기록, 오타는 처음부터 읽히지 않게 거절한다. */
@@ -96,7 +96,7 @@ class YamlPipelineConfigLoaderTest {
         kafka: {bootstrapServers: x, groupId: g, subscribe: [t.*]}
         topicPatterns:
           - pattern: t.*
-            destinations: [{db: postgres, sink: jdbc}]
+            destinations: [{system: postgres, sink: jdbc}]
         """);
     assertEquals(
         SinkMode.JDBC, new DefaultTopicBindingResolver(ok).resolve("t.a").getFirst().sink());
@@ -105,7 +105,7 @@ class YamlPipelineConfigLoaderTest {
         kafka: {bootstrapServers: x, groupId: g, subscribe: [t.a]}
         topics:
           t.a:
-            destinations: [{db: postgres, sink: jdbc}]
+            destinations: [{system: postgres, sink: jdbc}]
         """));
   }
 
@@ -115,12 +115,44 @@ class YamlPipelineConfigLoaderTest {
     assertThrows(IllegalArgumentException.class, () -> load("""
         kafka: {bootstrapServers: x, groupId: g, subscribe: [t.*]}
         defaults:
-          destinations: [{db: doris, sink: jdbc}]
+          destinations: [{system: doris, sink: jdbc}]
         """));
     assertThrows(IllegalArgumentException.class, () -> load("""
         kafka: {bootstrapServers: x, groupId: g, subscribe: [t.*]}
         defaults:
-          destinations: [{db: postgres, sink: dynamic}]
+          destinations: [{system: postgres, sink: dynamic}]
+        """));
+  }
+
+  /** Kafka 목적지는 name을 출력 토픽으로 유지하고, 예전 키·구독 겹침·writeMode는 시작 전에 거절한다. */
+  @Test
+  void kafkaDestinationUsesNameAndRejectsLoop() throws Exception {
+    PipelineConfig config = load("""
+        kafka: {bootstrapServers: x, groupId: g, subscribe: ['hv.j.dproc.rd_*']}
+        defaults:
+          destinations: [{system: kafka, target: hv.j.out.rd_lp}]
+        """);
+    DestinationConfig dest =
+        new DefaultTopicBindingResolver(config).resolve("hv.j.dproc.rd_lp").getFirst();
+    assertEquals(SystemType.KAFKA, dest.system());
+    assertEquals("hv.j.out.rd_lp", dest.target());
+
+    assertThrows(IllegalArgumentException.class, () -> load("""
+        defaults:
+          destinations: [{db: postgres}]
+        """));
+    assertThrows(IllegalArgumentException.class, () -> load("""
+        defaults:
+          destinations: [{system: kafka}]
+        """));
+    assertThrows(IllegalArgumentException.class, () -> load("""
+        kafka: {subscribe: ['hv.*']}
+        defaults:
+          destinations: [{system: kafka, target: hv.out}]
+        """));
+    assertThrows(IllegalArgumentException.class, () -> load("""
+        defaults:
+          destinations: [{system: kafka, target: hv.out, writeMode: UPSERT}]
         """));
   }
 
@@ -133,7 +165,7 @@ class YamlPipelineConfigLoaderTest {
             null,
             null,
             Map.of(),
-            Map.of(DbType.POSTGRES, new JdbcEndpointRecord("jdbc:postgresql://yaml/db", "y", "p")));
+            Map.of(SystemType.POSTGRES, new JdbcEndpointRecord("jdbc:postgresql://yaml/db", "y", "p")));
 
     YamlPipelineConfigLoader.Resolved resolved =
         YamlPipelineConfigLoader.resolve(
@@ -145,8 +177,8 @@ class YamlPipelineConfigLoaderTest {
                 "MSSQL_PASSWORD", "x",
                 "WRITE_BATCH_SIZE", "50"));
 
-    assertEquals("jdbc:postgresql://yaml/db", resolved.endpoints().get(DbType.POSTGRES).jdbcUrl());
-    assertTrue(resolved.endpoints().containsKey(DbType.MSSQL));
+    assertEquals("jdbc:postgresql://yaml/db", resolved.endpoints().get(SystemType.POSTGRES).jdbcUrl());
+    assertTrue(resolved.endpoints().containsKey(SystemType.MSSQL));
     assertEquals(50, resolved.writeBatchSize());
   }
 

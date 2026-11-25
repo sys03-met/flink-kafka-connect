@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import com.smdp.flinkconnect.config.PipelineModels.DbType;
+import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
 import com.smdp.flinkconnect.config.PipelineModels.SinkMode;
@@ -43,7 +43,7 @@ class JdbcSinkPathsDbE2ETest {
   void postgres_allPaths() throws Exception {
     assumeTrue(portOpen(5432), "Postgres 5432 down");
     run(
-        DbType.POSTGRES,
+        SystemType.POSTGRES,
         new JdbcEndpointRecord("jdbc:postgresql://localhost:5432/rd", "rd", "rd"),
         "DOUBLE PRECISION",
         "TIMESTAMP",
@@ -56,7 +56,7 @@ class JdbcSinkPathsDbE2ETest {
     assumeTrue(portOpen(port), "MSSQL " + port + " down");
     String password = System.getenv().getOrDefault("E2E_MSSQL_PASSWORD", "Verify#Pass123");
     run(
-        DbType.MSSQL,
+        SystemType.MSSQL,
         new JdbcEndpointRecord(
             "jdbc:sqlserver://localhost:" + port
                 + ";databaseName=master;encrypt=true;trustServerCertificate=true",
@@ -69,7 +69,7 @@ class JdbcSinkPathsDbE2ETest {
 
   /** 테이블 준비 → 레코드 적재 → 결과 확인. DB마다 다른 건 칸 형식과 "지금 시각" 식뿐. */
   private static void run(
-      DbType db, JdbcEndpointRecord ep, String doubleType, String tsType, String nowExpr
+      SystemType db, JdbcEndpointRecord ep, String doubleType, String tsType, String nowExpr
   ) throws Exception {
     try (Connection c = DriverManager.getConnection(ep.jdbcUrl(), ep.user(), ep.password());
         Statement st = c.createStatement()) {
@@ -112,7 +112,7 @@ class JdbcSinkPathsDbE2ETest {
     }
   }
 
-  private static WriteRecord rec(DbType db, String table, WriteMode mode, SinkMode sink, WriteRowRecord row) {
+  private static WriteRecord rec(SystemType db, String table, WriteMode mode, SinkMode sink, WriteRowRecord row) {
     return new WriteRecord(new DestinationConfig(db, table, mode, List.of(), List.of(), sink), row);
   }
 

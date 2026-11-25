@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smdp.flinkconnect.config.PipelineModels.DbType;
+import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.config.PipelineModels.DefaultsConfig;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.DlqConfig;
@@ -144,15 +144,15 @@ class PipelineJobTest {
                 new TopicConfig(
                     "RD_LP",
                     List.of(
-                        new DestinationConfig(DbType.POSTGRES, "RD_LP", WriteMode.UPSERT, List.of()),
-                        new DestinationConfig(DbType.DORIS, "RD_LP", WriteMode.BULK, List.of())))));
+                        new DestinationConfig(SystemType.POSTGRES, "RD_LP", WriteMode.UPSERT, List.of()),
+                        new DestinationConfig(SystemType.DORIS, "RD_LP", WriteMode.BULK, List.of())))));
 
     List<WriteRecord> out = new ArrayList<>();
     opened(config).flatMap(new TopicRecord("hv.j.dproc.rd_lp", rdPayload("M1")), collecting(out));
 
     assertEquals(2, out.size());
-    assertEquals(DbType.POSTGRES, out.get(0).destination().db());
-    assertEquals(DbType.DORIS, out.get(1).destination().db());
+    assertEquals(SystemType.POSTGRES, out.get(0).destination().system());
+    assertEquals(SystemType.DORIS, out.get(1).destination().system());
   }
 
   /** multi-topic-e2e.yaml: 토픽 10개가 한 ExpandProcessor 에서 모두 WriteRecord 로 나온다. */
@@ -172,12 +172,12 @@ class PipelineJobTest {
     // rd 5 × (PG+Doris) + meter 5 × MSSQL = 15
     assertEquals(15, out.size());
     Set<String> tables =
-        out.stream().map(r -> r.destination().table()).collect(Collectors.toCollection(HashSet::new));
+        out.stream().map(r -> r.destination().target()).collect(Collectors.toCollection(HashSet::new));
     assertTrue(tables.contains("RD_LP"));
     assertTrue(tables.contains("METER_CURR_LIMIT"));
-    assertEquals(5, out.stream().filter(r -> r.destination().db() == DbType.POSTGRES).count());
-    assertEquals(5, out.stream().filter(r -> r.destination().db() == DbType.DORIS).count());
-    assertEquals(5, out.stream().filter(r -> r.destination().db() == DbType.MSSQL).count());
+    assertEquals(5, out.stream().filter(r -> r.destination().system() == SystemType.POSTGRES).count());
+    assertEquals(5, out.stream().filter(r -> r.destination().system() == SystemType.DORIS).count());
+    assertEquals(5, out.stream().filter(r -> r.destination().system() == SystemType.MSSQL).count());
   }
 
   /** 동시성 스모크: 스레드 10개가 각자 expand 해도 결과가 빠지지 않는다. */

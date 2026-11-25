@@ -1,10 +1,11 @@
 package com.smdp.flinkconnect.sink.postgres;
 
-import com.smdp.flinkconnect.config.PipelineModels.DbType;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
+import com.smdp.flinkconnect.config.PipelineModels.PipelineConfig;
+import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRecord;
-import com.smdp.flinkconnect.sink.IDbSinkAdapter;
+import com.smdp.flinkconnect.sink.ISinkAdapter;
 import com.smdp.flinkconnect.sink.jdbc.IJdbcDialect;
 import com.smdp.flinkconnect.sink.jdbc.JdbcFamilySupport;
 import com.smdp.flinkconnect.sink.jdbc.JdbcSql;
@@ -21,10 +22,10 @@ import org.apache.flink.streaming.api.datastream.DataStream;
 import org.postgresql.PGConnection;
 
 /**
- * Postgres용 {@link IDbSinkAdapter} + {@link IJdbcDialect}.
+ * Postgres용 {@link ISinkAdapter} + {@link IJdbcDialect}.
  *
  * 연결
- * {@link DbType#POSTGRES} → {@code PipelineJob.adapterFor} 가 new.
+ * {@link SystemType#POSTGRES} → {@code newSink()} 가 이 클래스를 만든다.
  *
  * 하는 일
  *
@@ -32,22 +33,23 @@ import org.postgresql.PGConnection;
  *   - UPSERT 문장: {@code INSERT ... ON CONFLICT (키) DO UPDATE}
  *   - BULK: {@code COPY ... FROM STDIN} (Postgres 전용 고속 적재 통로)
  */
-public final class PostgresSinkAdapter implements IDbSinkAdapter, IJdbcDialect {
+public final class PostgresSinkAdapter implements ISinkAdapter, IJdbcDialect {
 
   private static final long serialVersionUID = 1L;
 
   /** 공식 Sink 연결 옵션·우리 Sink open 시 쓰는 드라이버. */
   private static final String DRIVER = "org.postgresql.Driver";
 
-  /** {@link IDbSinkAdapter} — Postgres 갈래를 그래프에 붙인다. 본문은 JdbcFamilySupport. */
+  /** {@link ISinkAdapter} — Postgres 갈래를 그래프에 붙인다. 본문은 JdbcFamilySupport. config는 Kafka용이라 안 쓴다. */
   @Override
   public void attach(
       DataStream<WriteRecord> writes,
       JdbcEndpointRecord endpoint,
       int batchSize,
-      List<DestinationConfig> planned
+      List<DestinationConfig> planned,
+      PipelineConfig config
   ) {
-    JdbcFamilySupport.attach(writes, DbType.POSTGRES, endpoint, batchSize, planned, this);
+    JdbcFamilySupport.attach(writes, SystemType.POSTGRES, endpoint, batchSize, planned, this);
   }
 
   @Override

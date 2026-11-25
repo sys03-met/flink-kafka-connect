@@ -1,7 +1,7 @@
 package com.smdp.flinkconnect.sink.jdbc;
 
 import com.smdp.flinkconnect.config.PipelineModels.ColumnRule;
-import com.smdp.flinkconnect.config.PipelineModels.DbType;
+import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
 import com.smdp.flinkconnect.config.PipelineModels.SinkMode;
@@ -63,7 +63,7 @@ public final class JdbcFamilySupport {
    */
   public static void attach(
       DataStream<WriteRecord> writes,
-      DbType db,
+      SystemType db,
       JdbcEndpointRecord endpoint,
       int batch,
       List<DestinationConfig> planned,
@@ -86,7 +86,7 @@ public final class JdbcFamilySupport {
 
     SingleOutputStreamOperator<WriteRecord> routed =
         writes
-            .filter((FilterFunction<WriteRecord>) r -> r.destination().db() == db)
+            .filter((FilterFunction<WriteRecord>) r -> r.destination().system() == db)
             .name("to-" + dbName)
             .process(new TargetRouter(tags, customJdbc))
             .name("route-" + dbName);
@@ -165,8 +165,8 @@ public final class JdbcFamilySupport {
       if (d.sink() != SinkMode.OFFICIAL) {
         continue;
       }
-      Target next = new Target(d.table(), d.writeMode(), d.primaryKeys(), sqlExprs(d.columns()), List.of());
-      String key = keyOf(d.table(), d.writeMode());
+      Target next = new Target(d.target(), d.writeMode(), d.primaryKeys(), sqlExprs(d.columns()), List.of());
+      String key = keyOf(d.target(), d.writeMode());
       Target prev = byKey.putIfAbsent(key, next);
       if (prev != null && !sameStatement(prev, next)) {
         throw new IllegalStateException(
@@ -267,7 +267,7 @@ public final class JdbcFamilySupport {
         out.collect(r);
         return;
       }
-      String key = keyOf(r.destination().table(), r.destination().writeMode());
+      String key = keyOf(r.destination().target(), r.destination().writeMode());
       OutputTag<WriteRecord> tag = tags.get(key);
       if (tag == null) {
         throw new IllegalStateException("공식 Sink 대상이 그래프에 없습니다: " + key);

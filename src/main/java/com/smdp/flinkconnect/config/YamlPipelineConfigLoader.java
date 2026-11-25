@@ -1,7 +1,7 @@
 package com.smdp.flinkconnect.config;
 
 import com.smdp.flinkconnect.config.PipelineModels.ColumnRule;
-import com.smdp.flinkconnect.config.PipelineModels.DbType;
+import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.config.PipelineModels.DefaultsConfig;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.DlqConfig;
@@ -37,7 +37,8 @@ import org.yaml.snakeyaml.Yaml;
  *   - SnakeYAML로 Map 파싱 (스키마 검증기 없음 — 필드 누락은 기본값)
  *   - jobName / kafka / dlq / defaults / topicPatterns / topics / databases 섹션 조립
  *   - Destination·ColumnRule·primaryKeys 하위 파싱
- *   - {@code sink: jdbc} 를 토픽명 명시 항목·Doris에 쓰면 로드 때 바로 실패
+   *   - {@code sink: jdbc} 를 토픽명 명시 항목에 쓰면 로드 때 바로 실패
+   *   - 시스템별 거절(Doris JDBC, Kafka 토픽명 등)은 각 Sink의 check가 한다
  *   - 모르는 column op는 Resolver 생성 때 실패 (op 목록은 ColumnOpHandlers 한곳)
  *   - {@link #resolve}: YAML + 환경변수 → 최종 접속 정보·배치 크기
  *
@@ -50,7 +51,7 @@ import org.yaml.snakeyaml.Yaml;
 public final class YamlPipelineConfigLoader {
 
   /** {@link #resolve} 결과. Job 이 Sink 를 붙일 때 쓴다. */
-  public record Resolved(Map<DbType, JdbcEndpointRecord> endpoints, int writeBatchSize) {
+  public record Resolved(Map<SystemType, JdbcEndpointRecord> endpoints, int writeBatchSize) {
     public Resolved {
       endpoints = endpoints != null ? Map.copyOf(endpoints) : Map.of();
     }
@@ -65,20 +66,23 @@ public final class YamlPipelineConfigLoader {
    */
   public static Resolved resolve(PipelineConfig config, Map<String, String> env) {
     Map<String, String> e = env != null ? env : Map.of();
-    Map<DbType, JdbcEndpointRecord> endpoints = new EnumMap<>(DbType.class);
+    Map<SystemType, JdbcEndpointRecord> endpoints = new EnumMap<>(SystemType.class);
     // YAML databases 가 우선 — 이미 있으면 env로 덮지 않음
     endpoints.putAll(config.databases());
-    putIfAbsent(endpoints, DbType.POSTGRES, e, "PG_JDBC_URL", "PG_USER", "PG_PASSWORD");
-    putIfAbsent(endpoints, DbType.MSSQL, e, "MSSQL_JDBC_URL", "MSSQL_USER", "MSSQL_PASSWORD");
-    putIfAbsent(endpoints, DbType.DORIS, e, "DORIS_JDBC_URL", "DORIS_USER", "DORIS_PASSWORD");
+    // 환경변수 키는 시스템 상수에 있다. Kafka처럼 키가 없으면 건너뛴다.
+    for (SystemType system : SystemType.values()) {
+      if (system.jdbc()) {
+        putIfAbsent(endpoints, system, e, system.envUrl(), system.envUser(), system.envPassword());
+      }
+    }
     String batch = e.get("WRITE_BATCH_SIZE");
     return new Resolved(endpoints, batch == null || batch.isBlank() ? 100 : Integer.parseInt(batch));
   }
 
   /** YAML에 해당 DB가 없을 때만 env URL로 endpoint 추가. URL 없으면 건너뜀 (부분 배포 허용). */
   private static void putIfAbsent(
-      Map<DbType, JdbcEndpointRecord> map,
-      DbType db,
+      Map<SystemType, JdbcEndpointRecord> map,
+      SystemType db,
       Map<String, String> env,
       String urlKey,
       String userKey,
@@ -120,25 +124,27 @@ public final class YamlPipelineConfigLoader {
               subscribe,
               parseStartingOffset(kafkaMap.get("startingOffsets")));
 
-      // --- defaults: 전역 destinations + 토픽→테이블 정규식 ---
+      // --- defaults: 전역 destinations + 토픽에서 target을 뽑는 정규식 ---
       Map<String, Object> defaultsMap =
           (Map<String, Object>) root.getOrDefault("defaults", Map.of());
+      rejectRetiredTargetKeys(defaultsMap);
       DefaultsConfig defaults =
           new DefaultsConfig(
-              parseDestinations(defaultsMap.get("destinations"), true),
-              // 고압 dproc 관례. Resolver가 캡처 그룹을 대문자 테이블명으로 쓴다.
-              stringOr(defaultsMap.get("tableFromTopic"), "hv\\.j\\.dproc\\.(.+)"));
+              parseDestinations(defaultsMap.get("destinations"), true, subscribe),
+              // 고압 dproc 관례. Resolver가 캡처 그룹을 대문자 target으로 쓴다.
+              stringOr(defaultsMap.get("targetFromTopic"), "hv\\.j\\.dproc\\.(.+)"));
 
       // --- topicPatterns: 선언 순서 유지 (나중 매칭이 이김) ---
       List<TopicPatternConfig> patterns = new ArrayList<>();
       List<Map<String, Object>> patternList =
           (List<Map<String, Object>>) root.getOrDefault("topicPatterns", List.of());
       for (Map<String, Object> p : patternList) {
+        rejectRetiredTargetKeys(p);
         patterns.add(
             new TopicPatternConfig(
                 stringOr(p.get("pattern"), null),
-                stringOr(p.get("table"), null),
-                parseDestinations(p.get("destinations"), true)));
+                stringOr(p.get("target"), null),
+                parseDestinations(p.get("destinations"), true, subscribe)));
       }
 
       // --- topics: 정확 일치 키가 최종 승자. LinkedHashMap으로 선언 순서 보존 ---
@@ -146,15 +152,16 @@ public final class YamlPipelineConfigLoader {
       Map<String, Object> topicsMap = (Map<String, Object>) root.getOrDefault("topics", Map.of());
       for (Map.Entry<String, Object> e : topicsMap.entrySet()) {
         Map<String, Object> t = (Map<String, Object>) e.getValue();
+        rejectRetiredTargetKeys(t);
         topics.put(
             e.getKey(),
             // 토픽명을 직접 적은 항목은 공식 커넥터만 허용 (sink: jdbc 거절)
             new TopicConfig(
-                stringOr(t.get("table"), null), parseDestinations(t.get("destinations"), false)));
+                stringOr(t.get("target"), null), parseDestinations(t.get("destinations"), false, subscribe)));
       }
 
       // --- databases: YAML JDBC. 없으면 resolve 가 env로 보충 ---
-      Map<DbType, JdbcEndpointRecord> databases = parseDatabases(root.get("databases"));
+      Map<SystemType, JdbcEndpointRecord> databases = parseDatabases(root.get("databases"));
       return new PipelineConfig(
           kafka, defaults, patterns, topics, databases,
           stringOr(root.get("jobName"), null), parseDlq(root.get("dlq"), subscribe));
@@ -203,19 +210,24 @@ public final class YamlPipelineConfigLoader {
   }
 
   /**
-   * {@code databases:} 맵 → DbType별 JDBC 엔드포인트.
+   * {@code databases:} 맵 → 시스템별 JDBC 엔드포인트.
    *
    * 키는 대소문자 무시({@code postgres} → POSTGRES).
    * Doris Stream Load용 {@code streamLoadUrl}은 선택(없으면 null).
+   * Kafka는 브로커 주소를 {@code kafka.bootstrapServers}에서 받으므로 이 맵에 넣지 않는다.
    */
   @SuppressWarnings("unchecked")
-  private static Map<DbType, JdbcEndpointRecord> parseDatabases(Object raw) {
+  private static Map<SystemType, JdbcEndpointRecord> parseDatabases(Object raw) {
     if (!(raw instanceof Map<?, ?> map)) {
       return Map.of();
     }
-    Map<DbType, JdbcEndpointRecord> result = new EnumMap<>(DbType.class);
+    Map<SystemType, JdbcEndpointRecord> result = new EnumMap<>(SystemType.class);
     for (Map.Entry<?, ?> e : map.entrySet()) {
-      DbType db = DbType.valueOf(String.valueOf(e.getKey()).toUpperCase(Locale.ROOT));
+      SystemType db = SystemType.valueOf(String.valueOf(e.getKey()).toUpperCase(Locale.ROOT));
+      if (!db.jdbc()) {
+        throw new IllegalArgumentException(
+            db + " 는 databases에 적지 않습니다. 접속은 그 시스템의 설정을 씁니다.");
+      }
       Map<String, Object> m = (Map<String, Object>) e.getValue();
       result.put(
           db,
@@ -228,6 +240,14 @@ public final class YamlPipelineConfigLoader {
     return result;
   }
 
+  /** 예전 table 키를 조용히 버리면 target이 비어 정규식으로 채워진다. 제출 전에 실패시킨다. */
+  private static void rejectRetiredTargetKeys(Map<String, Object> map) {
+    if (map.containsKey("table") || map.containsKey("tableFromTopic")) {
+      throw new IllegalArgumentException(
+          "target / targetFromTopic 을 씁니다. table / tableFromTopic 은 더 이상 읽지 않습니다.");
+    }
+  }
+
   /**
    * Destination 리스트 파싱 (defaults / patterns / topics 공통).
    *
@@ -236,14 +256,22 @@ public final class YamlPipelineConfigLoader {
    * @param allowJdbc {@code sink: jdbc} 허용 여부. 토픽명을 직접 적은 {@code topics:}는 false.
    */
   @SuppressWarnings("unchecked")
-  private static List<DestinationConfig> parseDestinations(Object raw, boolean allowJdbc) {
+  private static List<DestinationConfig> parseDestinations(
+      Object raw, boolean allowJdbc, List<String> subscribe
+  ) {
     if (!(raw instanceof List<?> list)) {
       return List.of();
     }
     List<DestinationConfig> result = new ArrayList<>();
     for (Object item : list) {
       Map<String, Object> m = (Map<String, Object>) item;
-      DbType db = DbType.valueOf(stringOr(m.get("db"), "POSTGRES").toUpperCase(Locale.ROOT));
+      // 예전 키를 조용히 무시하면 postgres로 떨어진다. 제출 전에 이름을 짚어 실패시킨다.
+      if (m.containsKey("db") || m.containsKey("table") || m.containsKey("name")) {
+        throw new IllegalArgumentException(
+            "목적지는 system 과 target 을 씁니다. db / table / name 은 더 이상 읽지 않습니다.");
+      }
+      SystemType system =
+          SystemType.valueOf(stringOr(m.get("system"), "POSTGRES").toUpperCase(Locale.ROOT));
       WriteMode mode =
           WriteMode.valueOf(stringOr(m.get("writeMode"), "INSERT").toUpperCase(Locale.ROOT));
       SinkMode sink = parseSinkMode(stringOr(m.get("sink"), "official"));
@@ -251,20 +279,19 @@ public final class YamlPipelineConfigLoader {
       if (sink == SinkMode.JDBC && !allowJdbc) {
         throw new IllegalArgumentException(
             "sink: jdbc 는 defaults / topicPatterns 에서만 쓸 수 있습니다. "
-                + "topics: (토픽명 명시) 항목은 공식 Sink만 씁니다. db=" + db);
+                + "topics: (토픽명 명시) 항목은 공식 Sink만 씁니다. system=" + system);
       }
-      // Doris는 Stream Load(공식 DorisSink)만 있다. JDBC INSERT 경로를 만들지 않는다.
-      if (sink == SinkMode.JDBC && db == DbType.DORIS) {
-        throw new IllegalArgumentException("sink: jdbc 는 Doris에 쓸 수 없습니다 (공식 Stream Load만).");
-      }
-      result.add(
+      DestinationConfig dest =
           new DestinationConfig(
-              db,
-              stringOr(m.get("table"), null),
+              system,
+              stringOr(m.get("target"), null),
               mode,
               parseColumns(m.get("columns")),
               parseStringList(m.get("primaryKeys")),
-              sink));
+              sink);
+      // 시스템별 거절은 어댑터에 있다. 로더는 종류를 나열하지 않는다.
+      system.newSink().check(dest, subscribe, allowJdbc);
+      result.add(dest);
     }
     return result;
   }

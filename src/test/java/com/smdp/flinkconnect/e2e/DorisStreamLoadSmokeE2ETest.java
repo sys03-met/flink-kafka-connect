@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import com.smdp.flinkconnect.config.PipelineModels.DbType;
+import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
 import com.smdp.flinkconnect.config.PipelineModels.PipelineConfig;
 import com.smdp.flinkconnect.config.YamlPipelineConfigLoader;
@@ -49,8 +49,8 @@ class DorisStreamLoadSmokeE2ETest {
             .anyMatch(e -> e.streamLoadUrl() != null && e.streamLoadUrl().contains(":8040")));
 
     // Doris만 남긴 엔드포인트 (PG 동시 적재 없이 Sink 경로만 검증)
-    Map<DbType, JdbcEndpointRecord> dorisOnlyEp =
-        Map.of(DbType.DORIS, settings.endpoints().get(DbType.DORIS));
+    Map<SystemType, JdbcEndpointRecord> dorisOnlyEp =
+        Map.of(SystemType.DORIS, settings.endpoints().get(SystemType.DORIS));
 
     DefaultTopicBindingResolver resolver = new DefaultTopicBindingResolver(config);
     List<WriteRecord> dorisOnly = new ArrayList<>();
@@ -60,7 +60,7 @@ class DorisStreamLoadSmokeE2ETest {
       payload.put("FAP", 1.0);
       payload.put("LARAP", 0.5);
       for (WriteRecord req : resolver.expand(new TopicRecord("hv.j.dproc.rd_lp", payload))) {
-        if (req.destination().db() == DbType.DORIS) {
+        if (req.destination().system() == SystemType.DORIS) {
           dorisOnly.add(req);
         }
       }

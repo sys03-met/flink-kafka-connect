@@ -85,7 +85,7 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
 
   /** INSERT 또는 UPSERT 배치. */
   private void appendStatement(WriteRecord value, boolean upsert) throws Exception {
-    String table = value.destination().table();
+    String table = value.destination().target();
     WriteRowRecord row = value.row();
     // 칸 구성이 바뀌면 SQL도 달라지므로 서명으로 PreparedStatement 를 나눈다
     String stmtKey = table + "|" + upsert + "|" + String.join(",", row.columns());
@@ -113,7 +113,7 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
     if (!yaml.isEmpty()) {
       return yaml;
     }
-    String table = value.destination().table();
+    String table = value.destination().target();
     List<String> keys = tableKeys.get(table);
     if (keys == null) {
       keys = JdbcSql.primaryKeys(connection, table);
@@ -128,7 +128,7 @@ public final class DynamicTableJdbcSink extends RichSinkFunction<WriteRecord>
   /** 대량 버퍼에 행을 쌓고 batchSize 가 되면 어댑터 대량 적재로 내보낸다. */
   private void appendBulk(WriteRecord value) throws Exception {
     WriteRowRecord row = value.row();
-    String table = value.destination().table();
+    String table = value.destination().target();
     // 대량 통로는 값만 보낸다. NOW() 같은 식은 넣을 자리가 없어 막는다
     if (row.hasSql()) {
       throw new IllegalStateException("BULK 에는 op: sql 컬럼을 쓸 수 없습니다: " + table);

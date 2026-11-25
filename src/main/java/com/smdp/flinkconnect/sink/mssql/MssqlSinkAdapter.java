@@ -4,11 +4,12 @@ import com.microsoft.sqlserver.jdbc.ISQLServerBulkData;
 import com.microsoft.sqlserver.jdbc.SQLServerBulkCopy;
 import com.microsoft.sqlserver.jdbc.SQLServerBulkCopyOptions;
 import com.microsoft.sqlserver.jdbc.SQLServerConnection;
-import com.smdp.flinkconnect.config.PipelineModels.DbType;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
+import com.smdp.flinkconnect.config.PipelineModels.PipelineConfig;
+import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRecord;
-import com.smdp.flinkconnect.sink.IDbSinkAdapter;
+import com.smdp.flinkconnect.sink.ISinkAdapter;
 import com.smdp.flinkconnect.sink.jdbc.IJdbcDialect;
 import com.smdp.flinkconnect.sink.jdbc.JdbcFamilySupport;
 import com.smdp.flinkconnect.sink.jdbc.JdbcSql.Column;
@@ -28,10 +29,10 @@ import java.util.stream.Collectors;
 import org.apache.flink.streaming.api.datastream.DataStream;
 
 /**
- * MSSQL용 {@link IDbSinkAdapter} + {@link IJdbcDialect}.
+ * MSSQL용 {@link ISinkAdapter} + {@link IJdbcDialect}.
  *
  * 연결
- * {@link DbType#MSSQL} → {@code PipelineJob.adapterFor} 가 new.
+ * {@link SystemType#MSSQL} → {@code newSink()} 가 이 클래스를 만든다.
  *
  * 하는 일
  *
@@ -39,21 +40,22 @@ import org.apache.flink.streaming.api.datastream.DataStream;
  *   - UPSERT 문장: {@code MERGE ... WITH (HOLDLOCK)} (MSSQL에는 ON CONFLICT 가 없다)
  *   - BULK: {@link SQLServerBulkCopy} (MSSQL 전용 고속 적재 통로, Postgres COPY 대응)
  */
-public final class MssqlSinkAdapter implements IDbSinkAdapter, IJdbcDialect {
+public final class MssqlSinkAdapter implements ISinkAdapter, IJdbcDialect {
 
   private static final long serialVersionUID = 1L;
 
   private static final String DRIVER = "com.microsoft.sqlserver.jdbc.SQLServerDriver";
 
-  /** {@link IDbSinkAdapter} — MSSQL 갈래를 그래프에 붙인다. 본문은 JdbcFamilySupport. */
+  /** {@link ISinkAdapter} — MSSQL 갈래를 그래프에 붙인다. 본문은 JdbcFamilySupport. config는 Kafka용이라 안 쓴다. */
   @Override
   public void attach(
       DataStream<WriteRecord> writes,
       JdbcEndpointRecord endpoint,
       int batchSize,
-      List<DestinationConfig> planned
+      List<DestinationConfig> planned,
+      PipelineConfig config
   ) {
-    JdbcFamilySupport.attach(writes, DbType.MSSQL, endpoint, batchSize, planned, this);
+    JdbcFamilySupport.attach(writes, SystemType.MSSQL, endpoint, batchSize, planned, this);
   }
 
   @Override

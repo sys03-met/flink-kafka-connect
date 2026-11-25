@@ -3,7 +3,7 @@ package com.smdp.flinkconnect.job;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smdp.flinkconnect.config.PipelineModels.DbType;
+import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
 import com.smdp.flinkconnect.config.PipelineModels.KafkaConfig;
@@ -12,10 +12,6 @@ import com.smdp.flinkconnect.config.PipelineModels.PipelineConfig;
 import com.smdp.flinkconnect.config.YamlPipelineConfigLoader;
 import com.smdp.flinkconnect.model.PipelineRecords.TopicRecord;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRecord;
-import com.smdp.flinkconnect.sink.IDbSinkAdapter;
-import com.smdp.flinkconnect.sink.doris.DorisSinkAdapter;
-import com.smdp.flinkconnect.sink.mssql.MssqlSinkAdapter;
-import com.smdp.flinkconnect.sink.postgres.PostgresSinkAdapter;
 import com.smdp.flinkconnect.subscribe.TopicSubscriptions;
 import com.smdp.flinkconnect.transform.DefaultTopicBindingResolver;
 import java.io.IOException;
@@ -42,10 +38,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Flink Job 엔트리포인트 + Kafka→DB 스트림 조립. 처리 순서가 이 파일 위에서 아래로 그대로 읽힌다.
+ * Flink Job 엔트리포인트 + Kafka 입력 스트림 조립. 처리 순서가 이 파일 위에서 아래로 그대로 읽힌다.
  *
  * <pre>
- * Kafka → {@link KafkaDecoder}(바이트→JSON) → {@link ExpandProcessor}(갈 곳마다 1→N) → {@link #attachSinks}(DB별 Sink)
+ * Kafka → {@link KafkaDecoder}(바이트→JSON) → {@link ExpandProcessor}(갈 곳마다 1→N) → {@link #attachSinks}(시스템별 Sink)
  * </pre>
  *
  * YAML 로드 → 위 그래프 조립 → execute. execute 이전에는 데이터를 읽지 않는다.
@@ -94,7 +90,7 @@ public final class PipelineJob {
       StreamExecutionEnvironment env,
       PipelineConfig config,
       Set<String> brokerTopics,
-      Map<DbType, JdbcEndpointRecord> endpoints,
+      Map<SystemType, JdbcEndpointRecord> endpoints,
       int batchSize
   ) {
     KafkaConfig kafka = config.kafka();
@@ -123,7 +119,7 @@ public final class PipelineJob {
     for (String topic : topics) {
       planned.addAll(resolver.resolve(topic));
     }
-    attachSinks(writes, endpoints, batchSize, planned);
+    attachSinks(writes, endpoints, batchSize, planned, config);
     return writes;
   }
 
@@ -158,45 +154,36 @@ public final class PipelineJob {
   }
 
   /**
-   * 쓰기 요청 스트림에 DB별 Sink 를 붙인다 (Sink 입구는 여기 하나. E2E 테스트도 이걸 부른다).
+   * 쓰기 요청 스트림에 시스템별 Sink를 붙인다 (Sink 입구는 여기 하나. E2E 테스트도 이걸 부른다).
    *
    * 메시지마다 도는 코드가 아니라, Job 시작 때 그래프를 한 번 그리는 코드다.
+   * 어댑터 짝은 {@link SystemType#newSink()} 에 있으므로 여기 switch는 없다.
    *
-   * @param endpoints DB별 접속. 키에 없는 DB는 붙이지 않는다
+   * @param endpoints JDBC 시스템 접속. 키에 없는 JDBC 시스템은 붙이지 않는다
    * @param planned 구독 토픽 전부를 resolve 한 Destination 목록 (그래프를 그릴 재료)
+   * @param config Kafka Sink가 브로커와 구독을 볼 때 쓴다
    */
   public static void attachSinks(
       DataStream<WriteRecord> writes,
-      Map<DbType, JdbcEndpointRecord> endpoints,
+      Map<SystemType, JdbcEndpointRecord> endpoints,
       int batchSize,
-      List<DestinationConfig> planned
+      List<DestinationConfig> planned,
+      PipelineConfig config
   ) {
     int batch = Math.max(1, batchSize);
-    for (DbType db : DbType.values()) {
-      List<DestinationConfig> mine = planned.stream().filter(d -> d.db() == db).toList();
+    for (SystemType system : SystemType.values()) {
+      List<DestinationConfig> mine = planned.stream().filter(d -> d.system() == system).toList();
       if (mine.isEmpty()) {
         continue;
       }
-      JdbcEndpointRecord endpoint = endpoints.get(db);
-      // 설정에는 있는데 접속 정보가 없으면 그 DB 행은 버려진다. 조용히 사라지지 않게 남긴다
-      if (endpoint == null) {
-        log.warn("{} 접속 정보가 없어 이 DB로 가는 행은 적재하지 않습니다.", db);
+      JdbcEndpointRecord endpoint = endpoints.get(system);
+      // JDBC 시스템만 접속이 필요하다. Kafka는 브로커 주소를 config에서 본다.
+      if (system.jdbc() && endpoint == null) {
+        log.warn("{} 접속 정보가 없어 이 시스템으로 가는 행은 적재하지 않습니다.", system);
         continue;
       }
-      adapterFor(db).attach(writes, endpoint, batch, mine);
+      system.newSink().attach(writes, endpoint, batch, mine, config);
     }
-  }
-
-  /**
-   * DB 종류 → 어댑터. 짝짓기는 여기 한 곳이라 설정 코드(DbType)가 적재 코드를 모른다.
-   * switch 가 모든 상수를 다뤄야 컴파일되므로 DB를 추가하면 여기서 바로 걸린다.
-   */
-  static IDbSinkAdapter adapterFor(DbType db) {
-    return switch (db) {
-      case POSTGRES -> new PostgresSinkAdapter();
-      case MSSQL -> new MssqlSinkAdapter();
-      case DORIS -> new DorisSinkAdapter();
-    };
   }
 
   /**

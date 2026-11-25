@@ -35,7 +35,7 @@ kafka:
   # 생략하면 committed. 그룹에 기록된 지점부터 읽고, 기록이 없으면 맨 끝(latest)만 본다.
   # 보관분을 처음부터 다시 넣으려면 earliest. 하루 대량 토픽에는 쓰지 않는다.
   # startingOffsets: committed
-  # 구독은 glob (정규식 아님). 테이블명 추출만 defaults.tableFromTopic 정규식 사용
+  # 구독은 glob (정규식 아님). target을 비우면 defaults.targetFromTopic 정규식으로 채운다
   subscribe:
     - hv.j.dproc.rd_*
     - hv.j.dproc.meter_curr_limit
@@ -66,26 +66,26 @@ databases:
 defaults:
   # 적용 순서: defaults → topicPatterns(위에서 아래로) → topics(정확 일치).
   # hv.j.dproc.rd_lp → 캡처 "rd_lp" → RD_LP
-  tableFromTopic: "hv\\.j\\.dproc\\.(.+)"
+  targetFromTopic: "hv\\.j\\.dproc\\.(.+)"
   destinations:
-    - db: postgres
+    - system: postgres
       writeMode: UPSERT  # 선택: INSERT(생략 시 기본), UPSERT, BULK
       # sink: official  # 기본. jdbc는 defaults / topicPatterns의 Postgres·MSSQL만 허용한다.
 
 topicPatterns:
   # 검침 계열: Postgres + Doris 팬아웃, BULK(Postgres=COPY, MSSQL=SQLServerBulkCopy, Doris=Stream Load)
   - pattern: hv.j.dproc.rd_*
-    # table: RD_ARCHIVE  # 이 패턴의 목적지에 공통 테이블명을 지정할 때 사용한다.
+    # target: RD_ARCHIVE  # 이 패턴의 목적지가 target을 비우면 이 값을 같이 쓴다.
     destinations:
-      - db: postgres
+      - system: postgres
         writeMode: BULK
-      - db: doris
+      - system: doris
         writeMode: BULK
   # 계기 상태 계열: MSSQL
   - pattern: hv.j.dproc.meter_*
     destinations:
-      - db: mssql
-        # table: METER_ARCHIVE  # 이 목적지의 테이블명만 재정의할 때 사용한다.
+      - system: mssql
+        # target: METER_ARCHIVE  # 이 목적지의 테이블명만 재정의할 때 사용한다.
         # sink: jdbc  # 컬럼 구성이 가변인 자체 JDBC 적재를 쓰려면 활성화한다.
         writeMode: UPSERT
         primaryKeys: [METER_ID]
@@ -93,9 +93,9 @@ topicPatterns:
 topics:
   # 정확 일치가 패턴보다 우선
   hv.j.dproc.rd_lp:
-    table: RD_LP
+    target: RD_LP
     destinations:
-      - db: postgres
+      - system: postgres
         writeMode: UPSERT
         # sink: official(기본, 생략) → Flink 공식 커넥터 (Postgres/MSSQL=공식 JdbcSink, Doris=DorisSink)
         # sink: jdbc → 우리 JDBC Sink. defaults / topicPatterns 에서만 쓸 수 있다 (여기 topics: 에 쓰면 시작 실패)
@@ -125,15 +125,18 @@ topics:
           #   params:
           #     source: FAP
           #     factor: 0.001
-          # SQL 식은 DB가 계산한다. BULK 및 Doris 목적지에서는 쓸 수 없다.
+          # SQL 식은 DB가 계산한다. BULK, Doris, Kafka 목적지에서는 쓸 수 없다.
           - field: INGEST_DT
             op: sql
             expression: "NOW()"
-      - db: doris
+      - system: doris
         writeMode: BULK
+      # 같은 행을 다른 토픽으로 보낼 때. target은 출력 토픽이고, subscribe와 겹치면 시작이 실패한다.
+      # - system: kafka
+      #   target: hv.j.out.rd_lp
   hv.j.dproc.meter_curr_limit:
-    table: METER_CURR_LIMIT
+    target: METER_CURR_LIMIT
     destinations:
-      - db: mssql
+      - system: mssql
         writeMode: UPSERT
         primaryKeys: [METER_ID]

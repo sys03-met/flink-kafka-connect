@@ -1,9 +1,15 @@
 package com.smdp.flinkconnect.config;
 
+import com.smdp.flinkconnect.sink.ISinkAdapter;
+import com.smdp.flinkconnect.sink.doris.DorisSinkAdapter;
+import com.smdp.flinkconnect.sink.kafka.KafkaSinkAdapter;
+import com.smdp.flinkconnect.sink.mssql.MssqlSinkAdapter;
+import com.smdp.flinkconnect.sink.postgres.PostgresSinkAdapter;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * 파이프라인 설정 객체들 (YAML 에 적는 값 전부).
@@ -14,22 +20,61 @@ import java.util.Map;
  * 병합 우선순위: defaults < topicPatterns(순서) < topics(정확 일치).
  *
  * Flink 연산자 스냅샷용으로 설정 트리는 {@link Serializable}.
- * 설정 코드는 적재(sink) 코드를 모른다. DB 이름 → 어댑터 짝짓기는 {@code PipelineJob} 한 곳.
+ * 시스템을 추가할 때는 {@link SystemType} 상수 한 줄과 sink 클래스만 넣는다.
+ * 로더·Resolver·Job은 상수에 적힌 {@link ISinkAdapter}를 부르므로 시스템을 하나씩 알지 않는다.
  */
 public final class PipelineModels {
 
   private PipelineModels() {}
 
   /**
-   * 지원 DB 종류 (YAML {@code db: postgres}). 이름만 있고 구현은 모른다.
+   * 적재 대상 종류 (YAML {@code system: postgres|kafka}).
    *
-   * DB 추가: 상수 하나 + {@code sink/<이름>/…SinkAdapter} + {@code PipelineJob.adapterFor} switch 한 줄
-   * (switch 를 빠뜨리면 컴파일 오류로 걸린다).
+   * 추가할 때 이 상수 한 줄과 {@code sink/<이름>/…SinkAdapter} 만 만든다.
+   * 이름 유도, 거절 규칙, 그래프 부착은 그 어댑터의 {@link ISinkAdapter}에 둔다.
+   * JDBC 환경변수 키가 있으면 Job이 접속 정보를 찾고, 없으면(Kafka) 브로커 설정을 쓴다.
+   * enum 필드는 직렬화되지 않는다. Flink는 상수 이름만 워커로 보내고, 워커가 클래스를 다시 초기화한다.
    */
-  public enum DbType {
-    POSTGRES,
-    MSSQL,
-    DORIS
+  public enum SystemType {
+    POSTGRES(PostgresSinkAdapter::new, "PG_JDBC_URL", "PG_USER", "PG_PASSWORD"),
+    MSSQL(MssqlSinkAdapter::new, "MSSQL_JDBC_URL", "MSSQL_USER", "MSSQL_PASSWORD"),
+    DORIS(DorisSinkAdapter::new, "DORIS_JDBC_URL", "DORIS_USER", "DORIS_PASSWORD"),
+    KAFKA(KafkaSinkAdapter::new, null, null, null);
+
+    private final Supplier<ISinkAdapter> sink;
+    /** null이면 databases·환경변수 JDBC를 쓰지 않는다. */
+    private final String envUrl;
+    private final String envUser;
+    private final String envPassword;
+
+    SystemType(Supplier<ISinkAdapter> sink, String envUrl, String envUser, String envPassword) {
+      this.sink = sink;
+      this.envUrl = envUrl;
+      this.envUser = envUser;
+      this.envPassword = envPassword;
+    }
+
+    /** 이 시스템의 적재 구현. 호출할 때마다 새 인스턴스다. */
+    public ISinkAdapter newSink() {
+      return sink.get();
+    }
+
+    /** JDBC 접속이 필요한 시스템. Kafka는 아니다. */
+    public boolean jdbc() {
+      return envUrl != null;
+    }
+
+    public String envUrl() {
+      return envUrl;
+    }
+
+    public String envUser() {
+      return envUser;
+    }
+
+    public String envPassword() {
+      return envPassword;
+    }
   }
 
   /**
@@ -175,18 +220,19 @@ public final class PipelineModels {
    *
    * 두 군데서 쓴다.
    *
-   *   - YAML 원본: table/writeMode 가 비어 있을 수 있다
-   *   - Resolver 가 풀어낸 값: table/writeMode 가 채워져 {@code WriteRecord} 에 실려 Sink 로 간다
+   *   - YAML 원본: target/writeMode 가 비어 있을 수 있다
+   *   - Resolver 가 풀어낸 값: target/writeMode 가 채워져 {@code WriteRecord} 에 실려 Sink 로 간다
    *     (이때 columns 는 이미 행에 반영돼 비운다)
    *
+   * {@code target}은 시스템마다 다르다. DB는 테이블명, Kafka는 출력 토픽명.
    * 리스트는 가변 {@link ArrayList} 복사본. Flink Kryo 는 불변 리스트를 역직렬화하다 깨진다.
    *
    * @param primaryKeys UPSERT용 키. 비면 Job 시작/첫 적재 때 DB 테이블의 PK를 읽어 쓴다. 그래도 없으면 실패.
    * @param sink 어느 코드로 넣을지. null이면 {@link SinkMode#OFFICIAL}.
    */
   public record DestinationConfig(
-      DbType db,
-      String table,
+      SystemType system,
+      String target,
       WriteMode writeMode,
       List<ColumnRule> columns,
       List<String> primaryKeys,
@@ -203,19 +249,19 @@ public final class PipelineModels {
     }
 
     /** PK 없음, sink 기본 OFFICIAL. */
-    public DestinationConfig(DbType db, String table, WriteMode writeMode, List<ColumnRule> columns) {
-      this(db, table, writeMode, columns, List.of(), SinkMode.OFFICIAL);
+    public DestinationConfig(SystemType system, String target, WriteMode writeMode, List<ColumnRule> columns) {
+      this(system, target, writeMode, columns, List.of(), SinkMode.OFFICIAL);
     }
 
     /** sink 기본 OFFICIAL. */
     public DestinationConfig(
-        DbType db, String table, WriteMode writeMode, List<ColumnRule> columns, List<String> primaryKeys
+        SystemType system, String target, WriteMode writeMode, List<ColumnRule> columns, List<String> primaryKeys
     ) {
-      this(db, table, writeMode, columns, primaryKeys, SinkMode.OFFICIAL);
+      this(system, target, writeMode, columns, primaryKeys, SinkMode.OFFICIAL);
     }
   }
 
-  public record DefaultsConfig(List<DestinationConfig> destinations, String tableFromTopic)
+  public record DefaultsConfig(List<DestinationConfig> destinations, String targetFromTopic)
       implements Serializable {
     private static final long serialVersionUID = 1L;
 
@@ -227,7 +273,7 @@ public final class PipelineModels {
   }
 
   public record TopicPatternConfig(
-      String pattern, String table, List<DestinationConfig> destinations)
+      String pattern, String target, List<DestinationConfig> destinations)
       implements Serializable {
     private static final long serialVersionUID = 1L;
 
@@ -238,7 +284,7 @@ public final class PipelineModels {
     }
   }
 
-  public record TopicConfig(String table, List<DestinationConfig> destinations)
+  public record TopicConfig(String target, List<DestinationConfig> destinations)
       implements Serializable {
     private static final long serialVersionUID = 1L;
 
@@ -265,7 +311,7 @@ public final class PipelineModels {
       DefaultsConfig defaults,
       List<TopicPatternConfig> topicPatterns,
       Map<String, TopicConfig> topics,
-      Map<DbType, JdbcEndpointRecord> databases,
+      Map<SystemType, JdbcEndpointRecord> databases,
       String jobName,
       DlqConfig dlq
   ) implements Serializable {
@@ -297,7 +343,7 @@ public final class PipelineModels {
         DefaultsConfig defaults,
         List<TopicPatternConfig> topicPatterns,
         Map<String, TopicConfig> topics,
-        Map<DbType, JdbcEndpointRecord> databases
+        Map<SystemType, JdbcEndpointRecord> databases
     ) {
       this(kafka, defaults, topicPatterns, topics, databases, null, null);
     }

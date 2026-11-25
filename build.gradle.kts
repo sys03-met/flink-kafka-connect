@@ -1,7 +1,7 @@
 ﻿/**
  * flink-connect 빌드 스크립트
  *
- * - Kafka(JSON) → Postgres/MSSQL/Doris 적재용 Flink Job
+ * - Kafka(JSON) → Postgres/MSSQL/Doris/Kafka 적재용 Flink Job
  * - 같은 JAR + YAML 설정으로 멀티토픽 Job / 중요토픽 전용 Job 분리 운영
  * - Java 21, Flink 1.20
  *

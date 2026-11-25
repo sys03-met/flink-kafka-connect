@@ -1,9 +1,10 @@
 package com.smdp.flinkconnect.e2e;
 
 import com.smdp.flinkconnect.config.PipelineModels.ColumnRule;
-import com.smdp.flinkconnect.config.PipelineModels.DbType;
+import com.smdp.flinkconnect.config.PipelineModels.SystemType;
 import com.smdp.flinkconnect.config.PipelineModels.DestinationConfig;
 import com.smdp.flinkconnect.config.PipelineModels.JdbcEndpointRecord;
+import com.smdp.flinkconnect.config.PipelineModels.PipelineConfig;
 import com.smdp.flinkconnect.job.PipelineJob;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRecord;
 import com.smdp.flinkconnect.model.PipelineRecords.WriteRowRecord;
@@ -35,7 +36,7 @@ final class FlinkLocalWrites {
 
   /** WriteRecord 목록을 Job 과 같은 Sink 입구({@link PipelineJob#attachSinks})로 적재하고 끝날 때까지 기다린다. */
   static void writeAll(
-      List<WriteRecord> requests, Map<DbType, JdbcEndpointRecord> endpoints, int batchSize
+      List<WriteRecord> requests, Map<SystemType, JdbcEndpointRecord> endpoints, int batchSize
   ) throws Exception {
     if (requests == null || requests.isEmpty()) {
       return;
@@ -46,7 +47,8 @@ final class FlinkLocalWrites {
         env.addSource(new IterSource(requests), TypeInformation.of(WriteRecord.class))
             .name("e2e-requests");
     // E2E는 YAML 없이 WriteRecord만 있으므로, 그래프 재료(계획 Destination)를 여기서 만든다
-    PipelineJob.attachSinks(stream, endpoints, batchSize, plannedFrom(requests));
+    PipelineJob.attachSinks(
+        stream, endpoints, batchSize, plannedFrom(requests), new PipelineConfig(null, null, null, Map.of()));
     env.execute("flink-connect-e2e-write");
   }
 
@@ -59,12 +61,12 @@ final class FlinkLocalWrites {
     Map<String, DestinationConfig> byKey = new LinkedHashMap<>();
     for (WriteRecord r : requests) {
       DestinationConfig d = r.destination();
-      String key = d.db() + "|" + d.table().toUpperCase() + "|" + d.writeMode() + "|" + d.sink();
+      String key = d.system() + "|" + d.target().toUpperCase() + "|" + d.writeMode() + "|" + d.sink();
       byKey.computeIfAbsent(
           key,
           k ->
               new DestinationConfig(
-                  d.db(), d.table(), d.writeMode(), sqlRules(r.row()), d.primaryKeys(), d.sink()));
+                  d.system(), d.target(), d.writeMode(), sqlRules(r.row()), d.primaryKeys(), d.sink()));
     }
     return new ArrayList<>(byKey.values());
   }

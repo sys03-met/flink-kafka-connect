@@ -22,16 +22,16 @@ databases:
     streamLoadUrl: "http://localhost:8040/api/rd/{table}/_stream_load"
 
 defaults:
-  tableFromTopic: "hv\\.j\\.dproc\\.(.+)"
+  targetFromTopic: "hv\\.j\\.dproc\\.(.+)"
   destinations:
-    - db: postgres
+    - system: postgres
       writeMode: INSERT
 
 topics:
   hv.j.dproc.rd_lp:
-    table: RD_LP
+    target: RD_LP
     destinations:
-      - db: postgres
+      - system: postgres
         writeMode: UPSERT
         primaryKeys: [METER_ID]
         columns:
@@ -44,11 +44,11 @@ topics:
           - field: METER_ID
             op: javaFunction
             expression: upper
-      - db: doris
+      - system: doris
         writeMode: BULK
   hv.j.dproc.meter_curr_limit:
-    table: METER_CURR_LIMIT
+    target: METER_CURR_LIMIT
     destinations:
-      - db: mssql
+      - system: mssql
         writeMode: UPSERT
         primaryKeys: [METER_ID]
