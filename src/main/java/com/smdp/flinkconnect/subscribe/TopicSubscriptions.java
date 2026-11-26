@@ -28,6 +28,20 @@ public final class TopicSubscriptions {
   private TopicSubscriptions() {}
 
   /**
+   * Kafka AdminClient 로 브로커 토픽 이름 조회 (내부 토픽 제외).
+   *
+   * 타임아웃을 짧게 둔 이유: 브로커 다운 시 Job 기동이 오래 멈추지 않게.
+   */
+  public static Set<String> listKafkaTopics(String bootstrapServers) throws Exception {
+    Properties props = new Properties();
+    props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+    props.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "10000");
+    try (AdminClient admin = AdminClient.create(props)) {
+      return admin.listTopics(new ListTopicsOptions().listInternal(false)).names().get(15, TimeUnit.SECONDS);
+    }
+  }
+
+  /**
    * subscribe 패턴 → 실제 토픽 목록 (순수).
    *
    * 정확 문자열(와일드카드 없음)은 브로커에 없어도 유지한다 —
@@ -91,17 +105,4 @@ public final class TopicSubscriptions {
     return Pattern.compile(regex.toString()).matcher(value).matches();
   }
 
-  /**
-   * Kafka AdminClient 로 브로커 토픽 이름 조회 (내부 토픽 제외).
-   *
-   * 타임아웃을 짧게 둔 이유: 브로커 다운 시 Job 기동이 오래 멈추지 않게.
-   */
-  public static Set<String> listKafkaTopics(String bootstrapServers) throws Exception {
-    Properties props = new Properties();
-    props.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
-    props.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "10000");
-    try (AdminClient admin = AdminClient.create(props)) {
-      return admin.listTopics(new ListTopicsOptions().listInternal(false)).names().get(15, TimeUnit.SECONDS);
-    }
-  }
 }

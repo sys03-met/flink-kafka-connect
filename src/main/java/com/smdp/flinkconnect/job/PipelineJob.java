@@ -161,42 +161,6 @@ public final class PipelineJob {
   }
 
   /**
-   * 쓰기 요청 스트림에 시스템별 Sink를 붙인다 (Sink 입구는 여기 하나. E2E 테스트도 이걸 부른다).
-   *
-   * 메시지마다 도는 코드가 아니라, Job 시작 때 그래프를 한 번 그리는 코드다.
-   * 어댑터 짝은 {@link SystemType#newSink()} 에 있으므로 여기 switch는 없다.
-   *
-   * @param endpoints JDBC 시스템 접속. 키에 없는 JDBC 시스템은 붙이지 않는다
-   * @param planned 구독 토픽 전부를 resolve 한 Destination 목록 (그래프를 그릴 재료)
-   * @param config Kafka Sink가 브로커와 구독을 볼 때 쓴다
-   */
-  public static void attachSinks(
-      DataStream<WriteRecord> writes,
-      Map<SystemType, JdbcEndpointRecord> endpoints,
-      int batchSize,
-      long batchIntervalMs,
-      List<DestinationConfig> planned,
-      PipelineConfig config
-  ) {
-    int batch = Math.max(1, batchSize);
-    // 0이면 타이머가 쉬지 않고 같은 버퍼를 계속 내보낸다. YAML 검증을 한 번 더 막는다.
-    long interval = Math.max(1L, batchIntervalMs);
-    for (SystemType system : SystemType.values()) {
-      List<DestinationConfig> mine = planned.stream().filter(d -> d.system() == system).toList();
-      if (mine.isEmpty()) {
-        continue;
-      }
-      JdbcEndpointRecord endpoint = endpoints.get(system);
-      // JDBC 시스템만 접속이 필요하다. Kafka는 브로커 주소를 config에서 본다.
-      if (system.jdbc() && endpoint == null) {
-        log.warn("{} 접속 정보가 없어 이 시스템으로 가는 행은 적재하지 않습니다.", system);
-        continue;
-      }
-      system.newSink().attach(writes, endpoint, batch, interval, mine, config);
-    }
-  }
-
-  /**
    * Kafka 메시지(바이트) → {@link TopicRecord} (토픽명 + JSON 맵). KafkaSource 의 역직렬화기.
    *
    * 전제: 페이로드는 JSON Object만 (dproc = j). DLQ가 없으면 깨진 JSON은 위치만 기록하고 건너뛴다.
@@ -307,4 +271,41 @@ public final class PipelineJob {
       }
     }
   }
+
+  /**
+   * 쓰기 요청 스트림에 시스템별 Sink를 붙인다 (Sink 입구는 여기 하나. E2E 테스트도 이걸 부른다).
+   *
+   * 메시지마다 도는 코드가 아니라, Job 시작 때 그래프를 한 번 그리는 코드다.
+   * 어댑터 짝은 {@link SystemType#newSink()} 에 있으므로 여기 switch는 없다.
+   *
+   * @param endpoints JDBC 시스템 접속. 키에 없는 JDBC 시스템은 붙이지 않는다
+   * @param planned 구독 토픽 전부를 resolve 한 Destination 목록 (그래프를 그릴 재료)
+   * @param config Kafka Sink가 브로커와 구독을 볼 때 쓴다
+   */
+  public static void attachSinks(
+      DataStream<WriteRecord> writes,
+      Map<SystemType, JdbcEndpointRecord> endpoints,
+      int batchSize,
+      long batchIntervalMs,
+      List<DestinationConfig> planned,
+      PipelineConfig config
+  ) {
+    int batch = Math.max(1, batchSize);
+    // 0이면 타이머가 쉬지 않고 같은 버퍼를 계속 내보낸다. YAML 검증을 한 번 더 막는다.
+    long interval = Math.max(1L, batchIntervalMs);
+    for (SystemType system : SystemType.values()) {
+      List<DestinationConfig> mine = planned.stream().filter(d -> d.system() == system).toList();
+      if (mine.isEmpty()) {
+        continue;
+      }
+      JdbcEndpointRecord endpoint = endpoints.get(system);
+      // JDBC 시스템만 접속이 필요하다. Kafka는 브로커 주소를 config에서 본다.
+      if (system.jdbc() && endpoint == null) {
+        log.warn("{} 접속 정보가 없어 이 시스템으로 가는 행은 적재하지 않습니다.", system);
+        continue;
+      }
+      system.newSink().attach(writes, endpoint, batch, interval, mine, config);
+    }
+  }
+
 }

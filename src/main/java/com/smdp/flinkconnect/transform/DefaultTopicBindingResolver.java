@@ -29,6 +29,7 @@ import java.util.regex.Pattern;
  *
  * 설정 오류(모르는 op, 대량/Doris + SQL 식)는 생성·resolve 때 바로 실패한다.
  * Job은 시작 전에 구독 토픽 전부를 resolve 하므로, 메시지가 오기 전에 걸린다.
+ * 메서드는 그 순서다. 생성자가 부르는 검사, resolve, 메시지가 온 뒤의 expand.
  */
 public final class DefaultTopicBindingResolver {
 
@@ -45,6 +46,19 @@ public final class DefaultTopicBindingResolver {
             : "hv\\.j\\.dproc\\.(.+)";
     this.targetFromTopic = Pattern.compile(regex);
     requireKnownOps(config);
+  }
+
+  /** 설정 안의 모든 컬럼 규칙 op가 아는 이름인지. 생성자에서 한 번. */
+  private static void requireKnownOps(PipelineConfig config) {
+    if (config.defaults() != null) {
+      config.defaults().destinations().forEach(d -> ColumnOpHandlers.requireKnownOps(d.columns()));
+    }
+    for (TopicPatternConfig p : config.topicPatterns()) {
+      p.destinations().forEach(d -> ColumnOpHandlers.requireKnownOps(d.columns()));
+    }
+    for (TopicConfig t : config.topics().values()) {
+      t.destinations().forEach(d -> ColumnOpHandlers.requireKnownOps(d.columns()));
+    }
   }
 
   /** 토픽명 → 갈 곳 목록 (토픽당 한 번만 계산). table·writeMode 는 항상 채워져 있다. */
@@ -125,6 +139,17 @@ public final class DefaultTopicBindingResolver {
             + ")");
   }
 
+  /** target 미지정 시 토픽 리프(또는 캡처 그룹)를 대문자로. DB는 이 값을 테이블명으로 쓴다. */
+  private String deriveTarget(String topic) {
+    Matcher matcher = targetFromTopic.matcher(topic);
+    if (matcher.matches() && matcher.groupCount() >= 1) {
+      return matcher.group(1).toUpperCase(Locale.ROOT);
+    }
+    int lastDot = topic.lastIndexOf('.');
+    String leaf = lastDot >= 0 ? topic.substring(lastDot + 1) : topic;
+    return leaf.toUpperCase(Locale.ROOT);
+  }
+
   /** 한 TopicRecord → WriteRecord N개 (갈 곳 + columns). */
   public List<WriteRecord> expand(TopicRecord record) {
     // 갈 곳·column 규칙은 캐시, payload 적용만 매 메시지
@@ -147,27 +172,4 @@ public final class DefaultTopicBindingResolver {
     return new ArrayList<>(out);
   }
 
-  /** 설정 안의 모든 컬럼 규칙 op가 아는 이름인지. 생성자에서 한 번. */
-  private static void requireKnownOps(PipelineConfig config) {
-    if (config.defaults() != null) {
-      config.defaults().destinations().forEach(d -> ColumnOpHandlers.requireKnownOps(d.columns()));
-    }
-    for (TopicPatternConfig p : config.topicPatterns()) {
-      p.destinations().forEach(d -> ColumnOpHandlers.requireKnownOps(d.columns()));
-    }
-    for (TopicConfig t : config.topics().values()) {
-      t.destinations().forEach(d -> ColumnOpHandlers.requireKnownOps(d.columns()));
-    }
-  }
-
-  /** target 미지정 시 토픽 리프(또는 캡처 그룹)를 대문자로. DB는 이 값을 테이블명으로 쓴다. */
-  private String deriveTarget(String topic) {
-    Matcher matcher = targetFromTopic.matcher(topic);
-    if (matcher.matches() && matcher.groupCount() >= 1) {
-      return matcher.group(1).toUpperCase(Locale.ROOT);
-    }
-    int lastDot = topic.lastIndexOf('.');
-    String leaf = lastDot >= 0 ? topic.substring(lastDot + 1) : topic;
-    return leaf.toUpperCase(Locale.ROOT);
-  }
 }

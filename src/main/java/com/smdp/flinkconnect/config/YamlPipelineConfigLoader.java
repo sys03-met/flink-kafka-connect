@@ -47,6 +47,8 @@ import org.yaml.snakeyaml.Yaml;
  * Usage:
  * {@code PipelineConfig c = new YamlPipelineConfigLoader().load(path);}
  * {@code Resolved s = YamlPipelineConfigLoader.resolve(c, System.getenv());}
+ *
+ * 메서드는 호출 순서로 둔다. load와 그 안에서 부르는 파서, 이어서 resolve.
  */
 public final class YamlPipelineConfigLoader {
 
@@ -59,64 +61,6 @@ public final class YamlPipelineConfigLoader {
     public Resolved {
       endpoints = endpoints != null ? Map.copyOf(endpoints) : Map.of();
     }
-  }
-
-  /**
-   * YAML과 환경변수를 합친 최종 설정.
-   *
-   *   - {@code databases:}에 있는 DB는 YAML 값 유지 (env로 덮지 않음)
-   *   - 없는 DB만 {@code PG_*}/{@code MSSQL_*}/{@code DORIS_*}로 채움 (URL 없으면 그 DB Sink 안 붙임)
-   *   - 배치 건수는 YAML {@code writeBatchSize}, 없으면 {@code WRITE_BATCH_SIZE}, 없으면 100
-   *   - 배치 간격은 YAML {@code writeBatchIntervalMs}, 없으면 1000. 건수가 안 차도 이 시간이 지나면 보낸다
-   */
-  public static Resolved resolve(PipelineConfig config, Map<String, String> env) {
-    Map<String, String> e = env != null ? env : Map.of();
-    Map<SystemType, JdbcEndpointRecord> endpoints = new EnumMap<>(SystemType.class);
-    // YAML databases 가 우선 — 이미 있으면 env로 덮지 않음
-    endpoints.putAll(config.databases());
-    // 환경변수 키는 시스템 상수에 있다. Kafka처럼 키가 없으면 건너뛴다.
-    for (SystemType system : SystemType.values()) {
-      if (system.jdbc()) {
-        putIfAbsent(endpoints, system, e, system.envUrl(), system.envUser(), system.envPassword());
-      }
-    }
-    // YAML에 건수가 있으면 환경변수보다 우선한다. 둘 다 없으면 100.
-    int batch = config.writeBatchSize() != null
-        ? positiveInt(String.valueOf(config.writeBatchSize()), 100, "writeBatchSize")
-        : positiveInt(e.get("WRITE_BATCH_SIZE"), 100, "WRITE_BATCH_SIZE");
-    long interval = config.writeBatchIntervalMs() != null ? config.writeBatchIntervalMs() : 1000L;
-    if (interval < 1) {
-      throw new IllegalArgumentException("writeBatchIntervalMs 는 1 이상이어야 합니다: " + interval);
-    }
-    return new Resolved(endpoints, batch, interval);
-  }
-
-  /** 비어 있으면 기본값. 0 이하는 배치가 안 나가거나 즉시 도배되므로 실패시킨다. */
-  private static int positiveInt(String raw, int fallback, String key) {
-    if (raw == null || raw.isBlank()) {
-      return fallback;
-    }
-    int n = Integer.parseInt(raw.trim());
-    if (n < 1) {
-      throw new IllegalArgumentException(key + " 는 1 이상이어야 합니다: " + raw);
-    }
-    return n;
-  }
-
-  /** YAML에 해당 DB가 없을 때만 env URL로 endpoint 추가. URL 없으면 건너뜀 (부분 배포 허용). */
-  private static void putIfAbsent(
-      Map<SystemType, JdbcEndpointRecord> map,
-      SystemType db,
-      Map<String, String> env,
-      String urlKey,
-      String userKey,
-      String passKey
-  ) {
-    String url = env.get(urlKey);
-    if (map.containsKey(db) || url == null || url.isBlank()) {
-      return;
-    }
-    map.put(db, new JdbcEndpointRecord(url, env.getOrDefault(userKey, ""), env.getOrDefault(passKey, "")));
   }
 
   /**
@@ -196,76 +140,22 @@ public final class YamlPipelineConfigLoader {
     }
   }
 
-  /** 선택 DLQ를 해석하고, 직접 적은 이름이 잘못되거나 입력과 겹치면 제출 전에 막는다. */
-  private static DlqConfig parseDlq(Object raw, List<String> subscribe) {
-    if (raw == null) {
-      return null;
-    }
-    if (!(raw instanceof Map<?, ?> map)) {
-      throw new IllegalArgumentException("dlq는 type이 있는 YAML 맵이어야 합니다.");
-    }
-    return switch (stringOr(map.get("type"), "").trim().toLowerCase(Locale.ROOT)) {
-      case "kafka" -> {
-        String topic = stringOr(map.get("topic"), null);
-        if (topic != null) {
-          topic = topic.trim();
-          if (!topic.matches("[a-zA-Z0-9._-]{1,249}") || topic.equals(".") || topic.equals("..")) {
-            throw new IllegalArgumentException("dlq.topic이 유효한 Kafka 토픽명이 아닙니다.");
-          }
-          // 아직 존재하지 않는 DLQ라도 입력 패턴과 겹치면 다음 제출 때 재구독할 수 있다.
-          if (TopicSubscriptions.expand(subscribe, Set.of(topic)).contains(topic)) {
-            throw new IllegalArgumentException("dlq.topic이 kafka.subscribe와 겹칩니다: " + topic);
-          }
-        }
-        yield new DlqConfig(DlqType.KAFKA, topic, null, null);
-      }
-      case "file" -> {
-        String directory = stringOr(map.get("directory"), ".error").trim();
-        if (directory.isEmpty()) {
-          throw new IllegalArgumentException("dlq.directory는 빈 경로일 수 없습니다.");
-        }
-        // 경로 이동은 directory로만 지정하고 fileName은 단일 파일 이름만 받는다.
-        String fileName = stringOr(map.get("fileName"), null);
-        if (fileName != null
-            && (!fileName.matches("[a-zA-Z0-9._-]{1,249}")
-                || fileName.equals(".") || fileName.equals(".."))) {
-          throw new IllegalArgumentException("dlq.fileName은 디렉터리 없는 파일명이어야 합니다.");
-        }
-        yield new DlqConfig(DlqType.FILE, null, directory, fileName);
-      }
-      default -> throw new IllegalArgumentException("dlq.type은 kafka 또는 file이어야 합니다.");
-    };
-  }
-
   /**
-   * {@code databases:} 맵 → 시스템별 JDBC 엔드포인트.
-   *
-   * 키는 대소문자 무시({@code postgres} → POSTGRES).
-   * Doris Stream Load용 {@code streamLoadUrl}은 선택(없으면 null).
-   * Kafka는 브로커 주소를 {@code kafka.bootstrapServers}에서 받으므로 이 맵에 넣지 않는다.
+   * YAML {@code kafka.startingOffsets}. 생략·빈 값은 committed.
+   * 오타는 earliest로 떨어지면 대량 토픽을 처음부터 읽으므로 바로 실패시킨다.
    */
-  @SuppressWarnings("unchecked")
-  private static Map<SystemType, JdbcEndpointRecord> parseDatabases(Object raw) {
-    if (!(raw instanceof Map<?, ?> map)) {
-      return Map.of();
+  private static KafkaStartingOffset parseStartingOffset(Object raw) {
+    if (raw == null || String.valueOf(raw).isBlank()) {
+      return KafkaStartingOffset.COMMITTED;
     }
-    Map<SystemType, JdbcEndpointRecord> result = new EnumMap<>(SystemType.class);
-    for (Map.Entry<?, ?> e : map.entrySet()) {
-      SystemType db = SystemType.valueOf(String.valueOf(e.getKey()).toUpperCase(Locale.ROOT));
-      if (!db.jdbc()) {
-        throw new IllegalArgumentException(
-            db + " 는 databases에 적지 않습니다. 접속은 그 시스템의 설정을 씁니다.");
-      }
-      Map<String, Object> m = (Map<String, Object>) e.getValue();
-      result.put(
-          db,
-          new JdbcEndpointRecord(
-              stringOr(m.get("jdbcUrl"), ""),
-              stringOr(m.get("user"), ""),
-              stringOr(m.get("password"), ""),
-              stringOr(m.get("streamLoadUrl"), null)));
-    }
-    return result;
+    return switch (String.valueOf(raw).trim().toLowerCase(Locale.ROOT)) {
+      case "committed" -> KafkaStartingOffset.COMMITTED;
+      case "latest" -> KafkaStartingOffset.LATEST;
+      case "earliest" -> KafkaStartingOffset.EARLIEST;
+      default ->
+          throw new IllegalArgumentException(
+              "kafka.startingOffsets: " + raw + " 는 모르는 값입니다. committed(기본), latest, earliest 만 씁니다.");
+    };
   }
 
   /** 예전 table 키를 조용히 버리면 target이 비어 정규식으로 채워진다. 제출 전에 실패시킨다. */
@@ -322,42 +212,6 @@ public final class YamlPipelineConfigLoader {
       result.add(dest);
     }
     return result;
-  }
-
-  /**
-   * YAML 문자열 리스트 (주로 {@code primaryKeys: [METER_ID]}).
-   *
-   * 리스트가 아니면 빈 목록 — null/누락과 동일 취급.
-   */
-  private static List<String> parseStringList(Object raw) {
-    if (!(raw instanceof List<?> list)) {
-      return List.of();
-    }
-    List<String> out = new ArrayList<>();
-    for (Object item : list) {
-      if (item != null) {
-        out.add(String.valueOf(item));
-      }
-    }
-    return List.copyOf(out);
-  }
-
-  /**
-   * YAML {@code kafka.startingOffsets}. 생략·빈 값은 committed.
-   * 오타는 earliest로 떨어지면 대량 토픽을 처음부터 읽으므로 바로 실패시킨다.
-   */
-  private static KafkaStartingOffset parseStartingOffset(Object raw) {
-    if (raw == null || String.valueOf(raw).isBlank()) {
-      return KafkaStartingOffset.COMMITTED;
-    }
-    return switch (String.valueOf(raw).trim().toLowerCase(Locale.ROOT)) {
-      case "committed" -> KafkaStartingOffset.COMMITTED;
-      case "latest" -> KafkaStartingOffset.LATEST;
-      case "earliest" -> KafkaStartingOffset.EARLIEST;
-      default ->
-          throw new IllegalArgumentException(
-              "kafka.startingOffsets: " + raw + " 는 모르는 값입니다. committed(기본), latest, earliest 만 씁니다.");
-    };
   }
 
   /**
@@ -425,6 +279,55 @@ public final class YamlPipelineConfigLoader {
   }
 
   /**
+   * YAML 문자열 리스트 (주로 {@code primaryKeys: [METER_ID]}).
+   *
+   * 리스트가 아니면 빈 목록 — null/누락과 동일 취급.
+   */
+  private static List<String> parseStringList(Object raw) {
+    if (!(raw instanceof List<?> list)) {
+      return List.of();
+    }
+    List<String> out = new ArrayList<>();
+    for (Object item : list) {
+      if (item != null) {
+        out.add(String.valueOf(item));
+      }
+    }
+    return List.copyOf(out);
+  }
+
+  /**
+   * {@code databases:} 맵 → 시스템별 JDBC 엔드포인트.
+   *
+   * 키는 대소문자 무시({@code postgres} → POSTGRES).
+   * Doris Stream Load용 {@code streamLoadUrl}은 선택(없으면 null).
+   * Kafka는 브로커 주소를 {@code kafka.bootstrapServers}에서 받으므로 이 맵에 넣지 않는다.
+   */
+  @SuppressWarnings("unchecked")
+  private static Map<SystemType, JdbcEndpointRecord> parseDatabases(Object raw) {
+    if (!(raw instanceof Map<?, ?> map)) {
+      return Map.of();
+    }
+    Map<SystemType, JdbcEndpointRecord> result = new EnumMap<>(SystemType.class);
+    for (Map.Entry<?, ?> e : map.entrySet()) {
+      SystemType db = SystemType.valueOf(String.valueOf(e.getKey()).toUpperCase(Locale.ROOT));
+      if (!db.jdbc()) {
+        throw new IllegalArgumentException(
+            db + " 는 databases에 적지 않습니다. 접속은 그 시스템의 설정을 씁니다.");
+      }
+      Map<String, Object> m = (Map<String, Object>) e.getValue();
+      result.put(
+          db,
+          new JdbcEndpointRecord(
+              stringOr(m.get("jdbcUrl"), ""),
+              stringOr(m.get("user"), ""),
+              stringOr(m.get("password"), ""),
+              stringOr(m.get("streamLoadUrl"), null)));
+    }
+    return result;
+  }
+
+  /**
    * YAML 숫자 키. 없으면 null이라 resolve가 기본값을 쓴다.
    * 0이면 타이머가 쉬지 않고 도배하거나, 배치가 영원히 안 나가므로 로드에서 막는다.
    */
@@ -441,8 +344,108 @@ public final class YamlPipelineConfigLoader {
     return n;
   }
 
+  /** 선택 DLQ를 해석하고, 직접 적은 이름이 잘못되거나 입력과 겹치면 제출 전에 막는다. */
+  private static DlqConfig parseDlq(Object raw, List<String> subscribe) {
+    if (raw == null) {
+      return null;
+    }
+    if (!(raw instanceof Map<?, ?> map)) {
+      throw new IllegalArgumentException("dlq는 type이 있는 YAML 맵이어야 합니다.");
+    }
+    return switch (stringOr(map.get("type"), "").trim().toLowerCase(Locale.ROOT)) {
+      case "kafka" -> {
+        String topic = stringOr(map.get("topic"), null);
+        if (topic != null) {
+          topic = topic.trim();
+          if (!topic.matches("[a-zA-Z0-9._-]{1,249}") || topic.equals(".") || topic.equals("..")) {
+            throw new IllegalArgumentException("dlq.topic이 유효한 Kafka 토픽명이 아닙니다.");
+          }
+          // 아직 존재하지 않는 DLQ라도 입력 패턴과 겹치면 다음 제출 때 재구독할 수 있다.
+          if (TopicSubscriptions.expand(subscribe, Set.of(topic)).contains(topic)) {
+            throw new IllegalArgumentException("dlq.topic이 kafka.subscribe와 겹칩니다: " + topic);
+          }
+        }
+        yield new DlqConfig(DlqType.KAFKA, topic, null, null);
+      }
+      case "file" -> {
+        String directory = stringOr(map.get("directory"), ".error").trim();
+        if (directory.isEmpty()) {
+          throw new IllegalArgumentException("dlq.directory는 빈 경로일 수 없습니다.");
+        }
+        // 경로 이동은 directory로만 지정하고 fileName은 단일 파일 이름만 받는다.
+        String fileName = stringOr(map.get("fileName"), null);
+        if (fileName != null
+            && (!fileName.matches("[a-zA-Z0-9._-]{1,249}")
+                || fileName.equals(".") || fileName.equals(".."))) {
+          throw new IllegalArgumentException("dlq.fileName은 디렉터리 없는 파일명이어야 합니다.");
+        }
+        yield new DlqConfig(DlqType.FILE, null, directory, fileName);
+      }
+      default -> throw new IllegalArgumentException("dlq.type은 kafka 또는 file이어야 합니다.");
+    };
+  }
+
   /** null이면 fallback, 아니면 문자열화. YAML 숫자·불리언도 String으로 넣는다. */
   private static String stringOr(Object value, String fallback) {
     return value == null ? fallback : String.valueOf(value);
   }
+
+  /**
+   * YAML과 환경변수를 합친 최종 설정.
+   *
+   *   - {@code databases:}에 있는 DB는 YAML 값 유지 (env로 덮지 않음)
+   *   - 없는 DB만 {@code PG_*}/{@code MSSQL_*}/{@code DORIS_*}로 채움 (URL 없으면 그 DB Sink 안 붙임)
+   *   - 배치 건수는 YAML {@code writeBatchSize}, 없으면 {@code WRITE_BATCH_SIZE}, 없으면 100
+   *   - 배치 간격은 YAML {@code writeBatchIntervalMs}, 없으면 1000. 건수가 안 차도 이 시간이 지나면 보낸다
+   */
+  public static Resolved resolve(PipelineConfig config, Map<String, String> env) {
+    Map<String, String> e = env != null ? env : Map.of();
+    Map<SystemType, JdbcEndpointRecord> endpoints = new EnumMap<>(SystemType.class);
+    // YAML databases 가 우선 — 이미 있으면 env로 덮지 않음
+    endpoints.putAll(config.databases());
+    // 환경변수 키는 시스템 상수에 있다. Kafka처럼 키가 없으면 건너뛴다.
+    for (SystemType system : SystemType.values()) {
+      if (system.jdbc()) {
+        putIfAbsent(endpoints, system, e, system.envUrl(), system.envUser(), system.envPassword());
+      }
+    }
+    // YAML에 건수가 있으면 환경변수보다 우선한다. 둘 다 없으면 100.
+    int batch = config.writeBatchSize() != null
+        ? positiveInt(String.valueOf(config.writeBatchSize()), 100, "writeBatchSize")
+        : positiveInt(e.get("WRITE_BATCH_SIZE"), 100, "WRITE_BATCH_SIZE");
+    long interval = config.writeBatchIntervalMs() != null ? config.writeBatchIntervalMs() : 1000L;
+    if (interval < 1) {
+      throw new IllegalArgumentException("writeBatchIntervalMs 는 1 이상이어야 합니다: " + interval);
+    }
+    return new Resolved(endpoints, batch, interval);
+  }
+
+  /** YAML에 해당 DB가 없을 때만 env URL로 endpoint 추가. URL 없으면 건너뜀 (부분 배포 허용). */
+  private static void putIfAbsent(
+      Map<SystemType, JdbcEndpointRecord> map,
+      SystemType db,
+      Map<String, String> env,
+      String urlKey,
+      String userKey,
+      String passKey
+  ) {
+    String url = env.get(urlKey);
+    if (map.containsKey(db) || url == null || url.isBlank()) {
+      return;
+    }
+    map.put(db, new JdbcEndpointRecord(url, env.getOrDefault(userKey, ""), env.getOrDefault(passKey, "")));
+  }
+
+  /** 비어 있으면 기본값. 0 이하는 배치가 안 나가거나 즉시 도배되므로 실패시킨다. */
+  private static int positiveInt(String raw, int fallback, String key) {
+    if (raw == null || raw.isBlank()) {
+      return fallback;
+    }
+    int n = Integer.parseInt(raw.trim());
+    if (n < 1) {
+      throw new IllegalArgumentException(key + " 는 1 이상이어야 합니다: " + raw);
+    }
+    return n;
+  }
+
 }
